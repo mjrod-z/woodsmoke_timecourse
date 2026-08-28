@@ -278,12 +278,11 @@ cat("  Significant (q <", ALPHA_Q, "):", sum(lmer_results_all$sig, na.rm = TRUE)
 stopifnot("TIMEPOINT" %in% names(lmer_results_all))
 
 diag_tp <- lmer_results_all %>%
-  dplyr::mutate(TIMEPOINT = sub("^_", "", as.character(TIMEPOINT))) %>%
   dplyr::count(SEX, CELLTYPE, HORMONE, TIMEPOINT, EXPOSURE, name = "n_tests")
 
 print(diag_tp)
 
-stopifnot(all(c("4", "144") %in% unique(diag_tp$TIMEPOINT)))
+stopifnot(all(c("4", "144") %in% unique(as.character(lmer_results_all$TIMEPOINT))))
 
 # Long-format export: raw values + LMER significance per cytokine/exposure/sex/timepoint
 WSTC_TMR_sig <- WSTC_paired %>%
