@@ -26,7 +26,7 @@ extract_timepoint_suffix <- function(sample_id) {
   sample_id <- trimws(as.character(sample_id))
   has_suffix <- grepl("(_144|_4)$", sample_id)
   out <- rep(NA_character_, length(sample_id))
-  out[has_suffix] <- sub("^.*(_144|_4)$", "\\1", sample_id[has_suffix])
+  out[has_suffix] <- sub("^.*_(144|4)$", "\\1", sample_id[has_suffix])
   out
 }
 
@@ -57,36 +57,41 @@ average_nonzero_by_sample <- function(data) {
 }
 
 build_sala_full <- function(averaged_data, metadata) {
-  # Merge averaged MSD data with metadata, extract timepoint from SAMPLEID,
-  # and apply factor levels.
   if (!"SAMPLEID" %in% names(averaged_data)) {
     stop("build_sala_full(): averaged_data must contain SAMPLEID.")
   }
-  
-  metadata_id_cols <- c("PATIENTCODE", "SAMPLEID", "Sample_ID", "SampleID")
-  metadata_id_col <- metadata_id_cols[metadata_id_cols %in% names(metadata)][1]
-  if (is.na(metadata_id_col)) {
-    stop("build_sala_full(): metadata must contain one of: ",
-         paste(metadata_id_cols, collapse = ", "))
+  if (!"SAMPLEID" %in% names(metadata)) {
+    stop("build_sala_full(): metadata must contain SAMPLEID.")
   }
   
-  averaged_prepped <- averaged_data %>%
+  norm_id <- function(x) {
+    x <- trimws(as.character(x))
+    x <- toupper(x)
+    x <- sub("(_144|_4)$", "", x)
+    x <- gsub("[^A-Z0-9]", "", x)
+    x
+  }
+  
+  avg <- averaged_data %>%
     dplyr::mutate(
-      SAMPLEID     = as.character(SAMPLEID),
-      TIMEPOINT    = extract_timepoint_suffix(SAMPLEID),
-      SAMPLEID_BASE = sub("(_144|_4)$", "", SAMPLEID)
+      SAMPLEID      = as.character(SAMPLEID),
+      TIMEPOINT     = extract_timepoint_suffix(SAMPLEID),
+      SAMPLEID_BASE = sub("(_144|_4)$", "", SAMPLEID),
+      JOIN_ID       = norm_id(SAMPLEID_BASE)
     )
   
-  metadata_prepped <- metadata %>%
-    dplyr::mutate(.JOIN_SAMPLEID_BASE = as.character(.data[[metadata_id_col]])) %>%
+  meta <- metadata %>%
+    dplyr::mutate(
+      META_SAMPLEID = as.character(SAMPLEID),
+      JOIN_ID       = norm_id(META_SAMPLEID)
+    ) %>%
     dplyr::select(-dplyr::any_of("SAMPLEID"))
   
-  merged <- averaged_prepped %>%
-    dplyr::left_join(metadata_prepped, by = c("SAMPLEID_BASE" = ".JOIN_SAMPLEID_BASE"))
+  merged <- avg %>%
+    dplyr::left_join(meta, by = "JOIN_ID")
   
   if (!"PATIENTCODE" %in% names(merged)) {
-    merged <- merged %>%
-      dplyr::mutate(PATIENTCODE = SAMPLEID_BASE)
+    merged <- merged %>% dplyr::mutate(PATIENTCODE = SAMPLEID_BASE)
   } else {
     merged <- merged %>%
       dplyr::mutate(PATIENTCODE = dplyr::coalesce(as.character(PATIENTCODE), SAMPLEID_BASE))
@@ -102,17 +107,8 @@ build_sala_full <- function(averaged_data, metadata) {
       PATIENTCODE = factor(PATIENTCODE)
     )
   
-  if (any(is.na(merged$TIMEPOINT))) {
-    warning("build_sala_full(): some SAMPLEID values do not end in '_4' or '_144'.")
-  }
-  
-  # Only remove PLATE if it exists
-  if ("PLATE" %in% names(merged)) {
-    merged <- merged %>% dplyr::select(-PLATE)
-  }
-  
   merged <- merged %>%
-    dplyr::select(-dplyr::any_of("SAMPLEID_BASE"))
+    dplyr::select(-dplyr::any_of(c("SAMPLEID_BASE", "JOIN_ID", "META_SAMPLEID")))
   
   merged
 }
@@ -154,24 +150,33 @@ standardize_exposure <- function(x) {
   is_missing <- is.na(x)
   x <- trimws(as.character(x))
   
-  # **CRITICAL: Remove E2/Estradiol suffixes FIRST**
+  # Remove hormone suffixes first
   x <- gsub(",?\\s*1\\s*nM\\s*B-Estradiol", "", x, ignore.case = TRUE)
   x <- gsub(",?\\s*1\\s*nM\\s*Estradiol", "", x, ignore.case = TRUE)
   x <- gsub(",?\\s*\\+\\s*E2$", "", x, ignore.case = TRUE)
   x <- gsub("\\+\\s*Paraff?in", "", x, ignore.case = TRUE)
   x <- trimws(x)
   
-  # Collapse multiple spaces, then normalize against canonical configured names.
-  x <- gsub("\\s+", " ", x)
-  canonical_key <- tolower(gsub("[^A-Za-z0-9]+", "", x))
+  # Canonical key: lowercase + strip non-alphanumeric
+  key <- tolower(gsub("[^a-z0-9]", "", x))
+  
   out <- dplyr::case_when(
-   canonical_key %in% c("pbs", "pbscontrol") ~ "PBS_Control",
-   canonical_key %in% c("untreated", "untreatedcontrol") ~ "Untreated_Control",
-   grepl("^pine(5|25)$", canonical_key) ~ paste0("Pine_", sub("^pine", "", canonical_key)),
-   grepl("^peat(5|25)$", canonical_key) ~ paste0("Peat_", sub("^peat", "", canonical_key)),
-   grepl("^eucalyptus(5|25)$", canonical_key) ~ paste0("Eucalyptus_", sub("^eucalyptus", "", canonical_key)),
-   grepl("^redoak(5|25)$", canonical_key) ~ paste0("RedOak_", sub("^redoak", "", canonical_key)),
-   TRUE ~ x
+    key %in% c("pbs", "pbscontrol") ~ "PBS_Control",
+    key %in% c("untreated", "untreatedcontrol") ~ "Untreated_Control",
+    
+    key %in% c("pine5") ~ "Pine_5",
+    key %in% c("pine25", "pine") ~ "Pine_25",
+    
+    key %in% c("peat5") ~ "Peat_5",
+    key %in% c("peat25", "peat") ~ "Peat_25",
+    
+    key %in% c("eucalyptus5") ~ "Eucalyptus_5",
+    key %in% c("eucalyptus25", "eucalyptus") ~ "Eucalyptus_25",
+    
+    key %in% c("redoak5") ~ "RedOak_5",
+    key %in% c("redoak25", "redoak", "redoakwood", "redoaksmoke") ~ "RedOak_25",
+    
+    TRUE ~ x
   )
   
   out <- gsub("[[:space:]-]+", "_", out)
@@ -184,25 +189,33 @@ standardize_exposure <- function(x) {
 exposure_display_name <- function(x, include_dose = TRUE) {
   canonical <- standardize_exposure(x)
   display <- dplyr::case_when(
-   canonical == "PBS_Control" ~ "PBS Control",
-   canonical == "Untreated_Control" ~ "Untreated Control",
-   canonical == "Pine_5" ~ "Pine 5",
-   canonical == "Pine_25" ~ "Pine 25",
-   canonical == "Peat_5" ~ "Peat 5",
-   canonical == "Peat_25" ~ "Peat 25",
-   canonical == "Eucalyptus_5" ~ "Eucalyptus 5",
-   canonical == "Eucalyptus_25" ~ "Eucalyptus 25",
-   canonical == "RedOak_5" ~ "Red Oak 5",
-   canonical == "RedOak_25" ~ "Red Oak 25",
-   TRUE ~ gsub("_", " ", canonical)
+    canonical == "PBS_Control" ~ "PBS Control",
+    canonical == "Untreated_Control" ~ "Untreated Control",
+    canonical == "Pine_5" ~ "Pine 5",
+    canonical == "Pine_25" ~ "Pine 25",
+    canonical == "Peat_5" ~ "Peat 5",
+    canonical == "Peat_25" ~ "Peat 25",
+    canonical == "Eucalyptus_5" ~ "Eucalyptus 5",
+    canonical == "Eucalyptus_25" ~ "Eucalyptus 25",
+    canonical == "RedOak_5" ~ "Red Oak 5",
+    canonical == "RedOak_25" ~ "Red Oak 25",
+    TRUE ~ gsub("_", " ", canonical)
   )
   
   if (!include_dose) {
-   display <- sub("\\s+[0-9]+$", "", display)
+    display <- sub("\\s+[0-9]+$", "", display)
   }
   
   display[is.na(canonical)] <- NA_character_
   display
+}
+
+normalize_join_id <- function(x) {
+  x <- trimws(as.character(x))
+  x <- toupper(x)
+  x <- sub("(_144|_4)$", "", x)   # remove time suffix
+  x <- gsub("[^A-Z0-9]", "", x)   # remove underscores, hyphens, spaces, etc.
+  x
 }
 
 # ============================================================================
