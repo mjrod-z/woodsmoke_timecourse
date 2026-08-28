@@ -22,6 +22,14 @@ ensure_dir <- function(path) {
   invisible(path)
 }
 
+extract_timepoint_suffix <- function(sample_id) {
+  sample_id <- trimws(as.character(sample_id))
+  has_suffix <- grepl("(_144|_4)$", sample_id)
+  out <- rep(NA_character_, length(sample_id))
+  out[has_suffix] <- sub("^.*(_144|_4)$", "\\1", sample_id[has_suffix])
+  out
+}
+
 # ============================================================================
 # SALA-SPECIFIC DATA FUNCTIONS
 # ============================================================================
@@ -49,23 +57,62 @@ average_nonzero_by_sample <- function(data) {
 }
 
 build_sala_full <- function(averaged_data, metadata) {
-  # Merge averaged MSD data with metadata and apply factor levels
-  # Remove PLATE only if it exists
+  # Merge averaged MSD data with metadata, extract timepoint from SAMPLEID,
+  # and apply factor levels.
+  if (!"SAMPLEID" %in% names(averaged_data)) {
+    stop("build_sala_full(): averaged_data must contain SAMPLEID.")
+  }
   
-  merged <- averaged_data %>%
-    dplyr::left_join(metadata, by = "SAMPLEID") %>%
+  metadata_id_cols <- c("PATIENTCODE", "SAMPLEID", "Sample_ID", "SampleID")
+  metadata_id_col <- metadata_id_cols[metadata_id_cols %in% names(metadata)][1]
+  if (is.na(metadata_id_col)) {
+    stop("build_sala_full(): metadata must contain one of: ",
+         paste(metadata_id_cols, collapse = ", "))
+  }
+  
+  averaged_prepped <- averaged_data %>%
+    dplyr::mutate(
+      SAMPLEID     = as.character(SAMPLEID),
+      TIMEPOINT    = extract_timepoint_suffix(SAMPLEID),
+      SAMPLEID_BASE = sub("(_144|_4)$", "", SAMPLEID)
+    )
+  
+  metadata_prepped <- metadata %>%
+    dplyr::mutate(.JOIN_SAMPLEID_BASE = as.character(.data[[metadata_id_col]])) %>%
+    dplyr::select(-dplyr::any_of("SAMPLEID"))
+  
+  merged <- averaged_prepped %>%
+    dplyr::left_join(metadata_prepped, by = c("SAMPLEID_BASE" = ".JOIN_SAMPLEID_BASE"))
+  
+  if (!"PATIENTCODE" %in% names(merged)) {
+    merged <- merged %>%
+      dplyr::mutate(PATIENTCODE = SAMPLEID_BASE)
+  } else {
+    merged <- merged %>%
+      dplyr::mutate(PATIENTCODE = dplyr::coalesce(as.character(PATIENTCODE), SAMPLEID_BASE))
+  }
+  
+  merged <- merged %>%
     dplyr::mutate(
       CELLTYPE    = factor(CELLTYPE,    levels = CELLTYPE_LEVELS),
       HORMONE     = factor(HORMONE,     levels = HORMONE_LEVELS),
+      TIMEPOINT   = factor(TIMEPOINT,   levels = TIMEPOINT_LEVELS),
       SEX         = factor(SEX,         levels = SEX_LEVELS),
       EXPOSURE    = standardize_exposure(EXPOSURE),
       PATIENTCODE = factor(PATIENTCODE)
     )
   
+  if (any(is.na(merged$TIMEPOINT))) {
+    warning("build_sala_full(): some SAMPLEID values do not end in '_4' or '_144'.")
+  }
+  
   # Only remove PLATE if it exists
   if ("PLATE" %in% names(merged)) {
     merged <- merged %>% dplyr::select(-PLATE)
   }
+  
+  merged <- merged %>%
+    dplyr::select(-dplyr::any_of("SAMPLEID_BASE"))
   
   merged
 }

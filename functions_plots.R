@@ -37,6 +37,11 @@ make_dotplot <- function(df, x_var, title_str,
                          up_color   = UP_COLOR_DEFAULT,
                          down_color = DOWN_COLOR_DEFAULT,
                          show_y = TRUE) {
+  facet_rows <- if ("TIMEPOINT" %in% names(df)) {
+    ggplot2::vars(CELLTYPE, TIMEPOINT)
+  } else {
+    ggplot2::vars(CELLTYPE)
+  }
   
   # Remove the filter — data is already pre-filtered in the Rmd
   # df <- df %>%
@@ -90,7 +95,7 @@ make_dotplot <- function(df, x_var, title_str,
       color = "none",
       fill  = ggplot2::guide_legend(title = "Direction\n(vs matched PBS)"),
       size  = ggplot2::guide_legend(title = "Effect size\n(sqrt|mean log2FC|)")) +
-    ggplot2::facet_grid(rows = ggplot2::vars(CELLTYPE),
+    ggplot2::facet_grid(rows = facet_rows,
                         cols = ggplot2::vars(HORMONE), drop = FALSE) +
     ggplot2::scale_x_discrete(expand = ggplot2::expansion(mult = c(0.8, 0.8)),
                               drop = TRUE) +
@@ -116,6 +121,11 @@ make_cytokine_barplot <- function(summary_raw, d_raw, cyt,
                                   up_color    = UP_COLOR_DEFAULT,
                                   down_color  = DOWN_COLOR_DEFAULT,
                                   estradiol_fill = ESTRADIOL_FILL_DEFAULT) {
+  facet_rows <- if ("TIMEPOINT" %in% names(summary_raw)) {
+    ggplot2::vars(CELLTYPE, TIMEPOINT)
+  } else {
+    ggplot2::vars(CELLTYPE)
+  }
   
   y_max     <- max(summary_raw$mu + summary_raw$sd, na.rm = TRUE)
   y_bracket <- y_max * 1.10
@@ -217,7 +227,7 @@ make_cytokine_barplot <- function(summary_raw, d_raw, cyt,
     ggplot2::scale_color_identity(guide = "none") +
     ggplot2::scale_x_discrete(expand = ggplot2::expansion(add = 0.6)) +
     ggplot2::scale_y_continuous(expand = ggplot2::expansion(mult = c(0.02, 0.18))) +
-    ggplot2::facet_grid(rows = ggplot2::vars(CELLTYPE),
+    ggplot2::facet_grid(rows = facet_rows,
                         cols = ggplot2::vars(HORMONE)) +
     bar_theme +
     ggplot2::labs(
@@ -230,13 +240,19 @@ make_cytokine_barplot <- function(summary_raw, d_raw, cyt,
 # ── Per-cytokine histogram ────────────────────────────────────────────────────
 
 make_cytokine_histogram <- function(d_raw, cyt, target_exposure) {
+  facet_rows <- if ("TIMEPOINT" %in% names(d_raw)) {
+    ggplot2::vars(CELLTYPE, TIMEPOINT)
+  } else {
+    ggplot2::vars(CELLTYPE)
+  }
+  
   ggplot2::ggplot(
     d_raw %>% dplyr::filter(EXPOSURE == target_exposure),
     ggplot2::aes(x = VALUE, fill = SEX)
   ) +
     ggplot2::geom_histogram(position = "identity", alpha = 0.65,
                             bins = 20, color = "grey40") +
-    ggplot2::facet_grid(rows = ggplot2::vars(CELLTYPE),
+    ggplot2::facet_grid(rows = facet_rows,
                         cols = ggplot2::vars(HORMONE)) +
     ggplot2::scale_fill_manual(values = c("M" = "lemonchiffon", "F" = "white"),
                                name = "Sex") +
