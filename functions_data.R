@@ -137,55 +137,72 @@ apply_factor_spec <- function(data,
 
 #' Standardize sample IDs (remove hyphens, fix prefixes)
 standardize_sample_id <- function(x) {
+  project_label <- if (exists("WSTC_LABEL", inherits = TRUE)) WSTC_LABEL else "WSTC"
+  is_missing <- is.na(x)
   x <- trimws(as.character(x))
   x <- gsub("\\.fastq.*$", "", x, ignore.case = TRUE)
   x <- gsub("\\.bam$", "", x, ignore.case = TRUE)
   x <- gsub("^X", "", x)
-  x <- gsub("^SALA-", "SALA", x)
-  x <- gsub("^SALA_", "SALA", x)
+  x <- gsub("^(SALA|WSTC)[-_]?", project_label, x, ignore.case = TRUE)
   x <- gsub("[[:space:]]+", "", x)
+  x[is_missing] <- NA_character_
   x
 }
 
 #' Standardize exposure names (remove E2 suffix, clean formatting)
 standardize_exposure <- function(x) {
+  is_missing <- is.na(x)
   x <- trimws(as.character(x))
   
   # **CRITICAL: Remove E2/Estradiol suffixes FIRST**
   x <- gsub(",?\\s*1\\s*nM\\s*B-Estradiol", "", x, ignore.case = TRUE)
   x <- gsub(",?\\s*1\\s*nM\\s*Estradiol", "", x, ignore.case = TRUE)
   x <- gsub(",?\\s*\\+\\s*E2$", "", x, ignore.case = TRUE)
-  x <- gsub("\\+\\s*Parafin", "", x, ignore.case = TRUE)
+  x <- gsub("\\+\\s*Paraff?in", "", x, ignore.case = TRUE)
   x <- trimws(x)
   
-  # Collapse multiple spaces
+  # Collapse multiple spaces, then normalize against canonical configured names.
   x <- gsub("\\s+", " ", x)
+  canonical_key <- tolower(gsub("[^A-Za-z0-9]+", "", x))
+  out <- dplyr::case_when(
+   canonical_key %in% c("pbs", "pbscontrol") ~ "PBS_Control",
+   canonical_key %in% c("untreated", "untreatedcontrol") ~ "Untreated_Control",
+   grepl("^pine(5|25)$", canonical_key) ~ paste0("Pine_", sub("^pine", "", canonical_key)),
+   grepl("^peat(5|25)$", canonical_key) ~ paste0("Peat_", sub("^peat", "", canonical_key)),
+   grepl("^eucalyptus(5|25)$", canonical_key) ~ paste0("Eucalyptus_", sub("^eucalyptus", "", canonical_key)),
+   grepl("^redoak(5|25)$", canonical_key) ~ paste0("RedOak_", sub("^redoak", "", canonical_key)),
+   TRUE ~ x
+  )
   
-  # Handle specific exposures BEFORE converting spaces to underscores
-  x <- gsub("^Red Oak (5|25)$", "RedOak_\\1", x, ignore.case = TRUE)
-  x <- gsub("^Eucalyptus (5|25)$", "Eucalyptus_\\1", x, ignore.case = TRUE)
-  x <- gsub("^Pine (5|25)$", "Pine_\\1", x, ignore.case = TRUE)
-  x <- gsub("^Peat (5|25)$", "Peat_\\1", x, ignore.case = TRUE)
+  out <- gsub("[[:space:]-]+", "_", out)
+  out <- gsub("_+", "_", out)
+  out <- gsub("^_|_$", "", out)
+  out[is_missing] <- NA_character_
+  out
+}
+
+exposure_display_name <- function(x, include_dose = TRUE) {
+  canonical <- standardize_exposure(x)
+  display <- dplyr::case_when(
+   canonical == "PBS_Control" ~ "PBS Control",
+   canonical == "Untreated_Control" ~ "Untreated Control",
+   canonical == "Pine_5" ~ "Pine 5",
+   canonical == "Pine_25" ~ "Pine 25",
+   canonical == "Peat_5" ~ "Peat 5",
+   canonical == "Peat_25" ~ "Peat 25",
+   canonical == "Eucalyptus_5" ~ "Eucalyptus 5",
+   canonical == "Eucalyptus_25" ~ "Eucalyptus 25",
+   canonical == "RedOak_5" ~ "Red Oak 5",
+   canonical == "RedOak_25" ~ "Red Oak 25",
+   TRUE ~ gsub("_", " ", canonical)
+  )
   
-  # Handle PBS variants
-  x <- gsub("^PBS Control$", "PBS_Control", x, ignore.case = TRUE)
-  x <- gsub("^PBS$", "PBS_Control", x, ignore.case = TRUE)
+  if (!include_dose) {
+   display <- sub("\\s+[0-9]+$", "", display)
+  }
   
-  # Handle Untreated variants
-  x <- gsub("^Untreated Control$", "Untreated_Control", x, ignore.case = TRUE)
-  x <- gsub("^Untreated$", "Untreated_Control", x, ignore.case = TRUE)
-  
-  # NOW convert any remaining spaces to underscores
-  x <- gsub(" ", "_", x)
-  
-  # Also catch already-underscored Red_Oak variants
-  x <- gsub("^Red_Oak_(5|25)$", "RedOak_\\1", x)
-  
-  # Clean up
-  x <- gsub("_+", "_", x)
-  x <- gsub("_$", "", x)
-  
-  x
+  display[is.na(canonical)] <- NA_character_
+  display
 }
 
 # ============================================================================

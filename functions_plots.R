@@ -26,6 +26,16 @@ add_rescaled_size <- function(df, value_col,
   df
 }
 
+make_placeholder_plot <- function(title_str, message_str) {
+  ggplot2::ggplot() +
+    ggplot2::theme_void() +
+    ggplot2::labs(title = title_str, subtitle = message_str) +
+    ggplot2::theme(
+      plot.title = ggplot2::element_text(face = "bold", size = 13, hjust = 0.5),
+      plot.subtitle = ggplot2::element_text(size = 11, hjust = 0.5)
+    )
+}
+
 # ── Cytokine dotplot (pooled or sex-stratified) ───────────────────────────────
 # Call once per exposure inside a loop; returns a combined cowplot grid.
 # Requires: plot_df_pooled, plot_df_sex, cyt_order, cyt_levels,
@@ -37,6 +47,22 @@ make_dotplot <- function(df, x_var, title_str,
                          up_color   = UP_COLOR_DEFAULT,
                          down_color = DOWN_COLOR_DEFAULT,
                          show_y = TRUE) {
+  required_cols <- unique(c(x_var, "CYTOKINE", "panel_fill", "direction", "size_val", "CELLTYPE", "HORMONE"))
+  missing_cols <- setdiff(required_cols, names(df))
+  if (length(missing_cols) > 0) {
+    warning("make_dotplot(): missing required columns: ",
+            paste(missing_cols, collapse = ", "))
+    return(make_placeholder_plot(title_str, "Dotplot skipped: plot inputs did not match expected columns."))
+  }
+  if (nrow(df) == 0) {
+    warning("make_dotplot(): no significant rows available for plotting.")
+    return(make_placeholder_plot(title_str, "No significant cytokines available for this view."))
+  }
+  if (!length(border_color) || is.na(border_color)) {
+    warning("make_dotplot(): missing border color; using grey50.")
+    border_color <- "grey50"
+  }
+  
   facet_rows <- if ("TIMEPOINT" %in% names(df)) {
     ggplot2::vars(CELLTYPE, TIMEPOINT)
   } else {
@@ -121,6 +147,19 @@ make_cytokine_barplot <- function(summary_raw, d_raw, cyt,
                                   up_color    = UP_COLOR_DEFAULT,
                                   down_color  = DOWN_COLOR_DEFAULT,
                                   estradiol_fill = ESTRADIOL_FILL_DEFAULT) {
+  if (nrow(summary_raw) == 0 || nrow(d_raw) == 0) {
+    warning("make_cytokine_barplot(): no rows available for cytokine ", cyt,
+            " and exposure ", target_exposure, ".")
+    return(make_placeholder_plot(
+      paste0(cyt, " — ", exp_short, " vs Control"),
+      "Bar plot skipped: no significant rows were available after filtering."
+    ))
+  }
+  if (!length(border_color) || is.na(border_color)) {
+    warning("make_cytokine_barplot(): missing border color; using grey50.")
+    border_color <- "grey50"
+  }
+  
   facet_rows <- if ("TIMEPOINT" %in% names(summary_raw)) {
     ggplot2::vars(CELLTYPE, TIMEPOINT)
   } else {
@@ -128,6 +167,14 @@ make_cytokine_barplot <- function(summary_raw, d_raw, cyt,
   }
   
   y_max     <- max(summary_raw$mu + summary_raw$sd, na.rm = TRUE)
+  if (!is.finite(y_max) || y_max <= 0) {
+    warning("make_cytokine_barplot(): non-finite y-axis range for cytokine ", cyt,
+            " and exposure ", target_exposure, ".")
+    return(make_placeholder_plot(
+      paste0(cyt, " — ", exp_short, " vs Control"),
+      "Bar plot skipped: summary values were not finite."
+    ))
+  }
   y_bracket <- y_max * 1.10
   bg_df     <- summary_raw %>% dplyr::distinct(CELLTYPE, HORMONE, panel_fill)
   
