@@ -72,9 +72,9 @@ priority_pathways <- c(
 
 # ── Factor levels ─────────────────────────────────────────────────────────────
 SEX_LEVELS      <- c("M", "F")
-CELLTYPE_LEVELS <- c("SAE", "LAE")  # These match your metadata
+CELLTYPE_LEVELS <- c("SAE", "LAE")
 HORMONE_LEVELS  <- c("NONE", "Estradiol")
-TIMEPOINT_LEVELS <- c("_4", "_144")
+TIMEPOINT_LEVELS <- c("4", "144")
 
 # ── Cytokine LLOD reference ───────────────────────────────────────────────────
 cytokine_llod <- data.frame(
