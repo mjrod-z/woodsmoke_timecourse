@@ -1,0 +1,33 @@
+# R / RStudio
+.Rproj.user/
+.Rhistory
+.RData
+.Ruserdata
+*.Rproj
+
+# Quarto / R Markdown / knit outputs
+*_cache/
+_cache/
+*_files/
+*_cache.*
+*.nb.html
+
+# Rendered outputs
+output/
+reports/
+figures/
+tables/
+
+# Temporary files
+*~
+*.tmp
+*.swp
+*.swo
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Optional local data artifacts
+data/derived/
+data/intermediate/
