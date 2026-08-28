@@ -255,6 +255,17 @@ exposure_lmer_pairwise <- function(data, group = "All", adjust_method = "fdr",
     pairwise <- emmeans::contrast(emm, method = "trt.vs.ctrl",
                                   ref = ctrl_idx, adjust = adjust_method)
     pairwise_df          <- as.data.frame(summary(pairwise))
+    if (by_timepoint &&
+        "TIMEPOINT" %in% names(df) &&
+        !"TIMEPOINT" %in% names(pairwise_df)) {
+      if (has_timepoint) {
+        stop("TIMEPOINT missing from timepoint-specific contrast output for ", resp)
+      }
+      tp_values <- unique(as.character(stats::na.omit(df$TIMEPOINT)))
+      if (length(tp_values) == 1) {
+        pairwise_df$TIMEPOINT <- tp_values
+      }
+    }
     pairwise_df$response <- resp
     results_list[[resp]] <- pairwise_df
   }
