@@ -70,7 +70,7 @@ make_log2fc_long <- function(df, cytokine_cols,
 
 # ── LMER screening: one exposure vs PBS, per CELLTYPE × HORMONE × SEX ────────
 # NOTE: screen_one_exposure_lmer_log2() is SUPERSEDED and no longer called in
-# 01_sala_analysis.Rmd.  The single source of statistical truth is now the
+# 01_timecourse_analysis.Rmd.  The single source of statistical truth is now the
 # exposure_lmer_pairwise() pipeline run inside run_lmer_chunk(), whose output
 # is returned as lmer_plot_data and used for both significance tables AND plots.
 # This function is kept here for reference only.
@@ -418,7 +418,7 @@ run_lmer_chunk <- function(label, celltype_filter, hormone_filter,
   cat("\n── LMER:", label, "──\n")
   
   if (is.null(sala_full))
-    stop("sala_full must be provided as a data frame containing the full SALA dataset")
+    stop("sala_full must be provided as a data frame containing the full WSTC dataset")
   
   d_sub <- sala_full %>%
     dplyr::filter(CELLTYPE == celltype_filter, HORMONE == hormone_filter)
@@ -457,7 +457,7 @@ run_lmer_chunk <- function(label, celltype_filter, hormone_filter,
     alpha    = alpha_q
   )
   
-  out_csv <- paste0("MSD_SALA_", label, "_lmer.csv")
+  out_csv <- paste0("MSD_WSTC_", label, "_lmer.csv")
   sig_tbl <- build_lmer_sig_table(
     lmer_All      = lmer_All,
     lmer_F        = lmer_F,
