@@ -878,6 +878,7 @@ pca_full_df <- imp$data %>%
   dplyr::mutate(
     SEX         = factor(SEX,      levels = SEX_LEVELS),
     HORMONE     = factor(HORMONE,  levels = HORMONE_LEVELS),
+    TIMEPOINT   = factor(TIMEPOINT, levels = TIMEPOINT_LEVELS),
     CELLTYPE    = factor(CELLTYPE, levels = CELLTYPE_LEVELS),
     EXPOSURE    = factor(EXPOSURE),
     PATIENTCODE = factor(PATIENTCODE)
@@ -900,7 +901,7 @@ pca_df_full <- as.data.frame(pca_res_full$x[, 1:2]) %>%
   tibble::rownames_to_column("SAMPLEID") %>%
   dplyr::left_join(
     pca_full_df %>%
-      dplyr::select(SAMPLEID, SEX, HORMONE, CELLTYPE, EXPOSURE, PATIENTCODE),
+      dplyr::select(SAMPLEID, SEX, HORMONE, TIMEPOINT, CELLTYPE, EXPOSURE, PATIENTCODE),
     by = "SAMPLEID"
   )
 
@@ -975,14 +976,27 @@ p_pca_hormone <- ggplot2::ggplot(
   ggplot2::labs(x = pc_labs["x"], y = pc_labs["y"], title = "PCA \u2014 By Hormone") +
   base_pca_theme
 
+# ── E) By TIMEPOINT ───────────────────────────────────────────────────────
+p_pca_timepoint <- ggplot2::ggplot(
+  pca_df_full, ggplot2::aes(PC1, PC2, fill = TIMEPOINT, color = TIMEPOINT)
+) +
+  ggplot2::stat_ellipse(ggplot2::aes(group = TIMEPOINT),
+                        geom = "polygon", alpha = 0.10,
+                        linewidth = 0.6, show.legend = FALSE) +
+  ggplot2::geom_point(shape = 21, size = 2.5, alpha = 0.85, stroke = 0.6) +
+  ggplot2::scale_fill_manual(values = c("_4" = "#4DAF4A", "_144" = "#984EA3"), name = "Timepoint") +
+  ggplot2::scale_color_manual(values = c("_4" = "#4DAF4A", "_144" = "#984EA3"), name = "Timepoint") +
+  ggplot2::labs(x = pc_labs["x"], y = pc_labs["y"], title = "PCA \u2014 By Timepoint") +
+  base_pca_theme
+
 p_pca_factors_combined <- cowplot::plot_grid(
-  p_pca_exposure_all, p_pca_celltype, p_pca_sex, p_pca_hormone,
-  nrow = 2, ncol = 2,
+  p_pca_exposure_all, p_pca_celltype, p_pca_sex, p_pca_hormone, p_pca_timepoint,
+  nrow = 2, ncol = 3,
   labels = "AUTO", label_size = 14
 )
 print(p_pca_factors_combined)
 
-save_plot("pca_by_exposure_airway_sex_hormone.png",
+save_plot("pca_by_exposure_airway_sex_hormone_timepoint.png",
           p_pca_factors_combined, width = 14, height = 10, dpi = 300, bg = "white")
 
 # Individual saves in case you want them separately
@@ -990,6 +1004,7 @@ save_plot("pca_by_exposure.png", p_pca_exposure_all, width = 7, height = 6, dpi 
 save_plot("pca_by_airway.png",   p_pca_celltype,      width = 7, height = 6, dpi = 300, bg = "white")
 save_plot("pca_by_sex.png",      p_pca_sex,           width = 7, height = 6, dpi = 300, bg = "white")
 save_plot("pca_by_hormone.png",  p_pca_hormone,       width = 7, height = 6, dpi = 300, bg = "white")
+save_plot("pca_by_timepoint.png", p_pca_timepoint,    width = 7, height = 6, dpi = 300, bg = "white")
 ```
 
 # Session Information
