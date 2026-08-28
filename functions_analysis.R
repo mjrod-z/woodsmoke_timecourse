@@ -200,7 +200,8 @@ screen_one_exposure_lmer_log2 <- function(df, cytokine_cols, target_exposure,
 
 exposure_lmer_pairwise <- function(data, group = "All", adjust_method = "fdr",
                                    response_columns = NULL,
-                                   ctrl_level = "PBS_Control") {
+                                   ctrl_level = "PBS_Control",
+                                   by_timepoint = FALSE) {
   if (group != "All" && "SEX" %in% names(data))
     data <- data %>% dplyr::filter(SEX == group)
   if ("TIMEPOINT" %in% names(data)) {
@@ -241,7 +242,15 @@ exposure_lmer_pairwise <- function(data, group = "All", adjust_method = "fdr",
       silent = TRUE)
     if (inherits(model, "try-error")) { warning("Model failed for ", resp); next }
     
-    emm      <- emmeans::emmeans(model, ~ EXPOSURE, weights = "equal")
+    has_timepoint <- by_timepoint &&
+      "TIMEPOINT" %in% names(df) &&
+      dplyr::n_distinct(df$TIMEPOINT[!is.na(df$TIMEPOINT)]) > 1
+    emm_spec <- if (has_timepoint) {
+      stats::as.formula("~ EXPOSURE | TIMEPOINT")
+    } else {
+      stats::as.formula("~ EXPOSURE")
+    }
+    emm      <- emmeans::emmeans(model, emm_spec, weights = "equal")
     ctrl_idx <- which(levels(data$EXPOSURE) == ctrl_level)
     pairwise <- emmeans::contrast(emm, method = "trt.vs.ctrl",
                                   ref = ctrl_idx, adjust = adjust_method)
@@ -446,12 +455,18 @@ run_lmer_chunk <- function(label, celltype_filter, hormone_filter,
   lmer_All <- exposure_lmer_pairwise(d_filt, "All", "fdr", valid_cyts)
   lmer_F   <- exposure_lmer_pairwise(d_filt, "F",   "fdr", valid_cyts)
   lmer_M   <- exposure_lmer_pairwise(d_filt, "M",   "fdr", valid_cyts)
+  lmer_plot_All <- exposure_lmer_pairwise(d_filt, "All", "fdr", valid_cyts,
+                                          by_timepoint = TRUE)
+  lmer_plot_F   <- exposure_lmer_pairwise(d_filt, "F",   "fdr", valid_cyts,
+                                          by_timepoint = TRUE)
+  lmer_plot_M   <- exposure_lmer_pairwise(d_filt, "M",   "fdr", valid_cyts,
+                                          by_timepoint = TRUE)
   lmer_int <- interaction_lmer_pairwise(d_filt, "All", "fdr", valid_cyts)
   
   # Convert LMER results to plot-compatible format (used by cytokine dotplots
   # and bar plots instead of the retired screen_one_exposure_lmer_log2()).
   lmer_plot_data <- lmer_results_to_plot_format(
-    lmer_All, lmer_F, lmer_M,
+    lmer_plot_All, lmer_plot_F, lmer_plot_M,
     celltype = celltype_filter,
     hormone  = hormone_filter,
     alpha    = alpha_q
@@ -579,9 +594,7 @@ build_lmer_sig_table <- function(lmer_All, lmer_F, lmer_M,
 
 # ── Convert exposure_lmer_pairwise() output to plot-compatible format ─────────
 # Used internally by run_lmer_chunk() to produce lmer_plot_data.
-# FDR correction matches build_lmer_sig_table() exactly:
-#   group_by(CYTOKINE) %>% p.adjust(p.value, method = "fdr")
-# so q-values are IDENTICAL between significance tables and plots.
+# FDR correction is applied per cytokine and, when present, per TIMEPOINT.
 
 lmer_results_to_plot_format <- function(lmer_All, lmer_F, lmer_M,
                                         celltype, hormone,
@@ -595,7 +608,8 @@ lmer_results_to_plot_format <- function(lmer_All, lmer_F, lmer_M,
         EXPOSURE = stringr::str_replace(contrast, " - PBS_Control$", ""),
         CYTOKINE = response
       ) %>%
-      dplyr::select(SEX, CELLTYPE, HORMONE, EXPOSURE, CYTOKINE,
+      dplyr::select(SEX, CELLTYPE, HORMONE, dplyr::any_of("TIMEPOINT"),
+                    EXPOSURE, CYTOKINE,
                     estimate, SE, p.value)
   }
   
@@ -605,10 +619,10 @@ lmer_results_to_plot_format <- function(lmer_All, lmer_F, lmer_M,
     parse_rows(lmer_M,   "M")
   )
   
-  # FDR correction matching build_lmer_sig_table(): group by CYTOKINE
-  # across all sex groups and exposures together.
+  group_vars <- c("CYTOKINE", intersect("TIMEPOINT", names(combined)))
+
   combined %>%
-    dplyr::group_by(CYTOKINE) %>%
+    dplyr::group_by(dplyr::across(dplyr::all_of(group_vars))) %>%
     dplyr::mutate(q = p.adjust(p.value, method = "fdr")) %>%
     dplyr::ungroup() %>%
     dplyr::mutate(sig = q < alpha)

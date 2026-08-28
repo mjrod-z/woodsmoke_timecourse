@@ -193,7 +193,7 @@ cat("✓ Paired dataset rows:", nrow(WSTC_paired), "\n")
 
 # Cytokine & Imputation Setup
 
-Imputes values below LLOD (LOD/√2) using a single global pass over `WSTC_full`.
+Imputes values below LLOD (LOD/√2) using a single global pass over `WSTC_paired`.
 The **sole cytokine-inclusion gate** is `impute_lod_sqrt2()`'s `ZERO_CUTOFF` (≤ 30% NA/zero
 per SEX group). The old dotplot-specific > 50% imputed filter is dropped: cytokine
 validity is now determined consistently by the LMER pipeline (`valid_cytokines` inside
@@ -201,13 +201,13 @@ validity is now determined consistently by the LMER pipeline (`valid_cytokines` 
 objects are used only for visualization (log₂FC, bar heights, raw-data points).
 
 ```{r cytokine-setup}
-# Identify cytokine columns present in WSTC_full once, outside the loop
-cytokine_cols_all <- intersect(names(WSTC_full), cytokine_llod$Analyte)
+# Identify cytokine columns present in WSTC_paired once, outside the loop
+cytokine_cols_all <- intersect(names(WSTC_paired), cytokine_llod$Analyte)
 
 # Global imputation for visualization (dotplots, bar plots, smoker variance PCA).
 # Statistical testing uses the per-stratum imputation inside run_lmer_chunk().
 imp    <- impute_lod_sqrt2(
-  input_data    = WSTC_full,
+  input_data    = WSTC_paired,
   cols          = cytokine_cols_all,
   cytokine_llod = cytokine_llod,
   zero_cutoff   = ZERO_CUTOFF
@@ -227,12 +227,12 @@ cat("First few global cytokines:", paste(head(imp$valid_cytokines), collapse = "
 
 # LMER Significance Tables
 
-Runs the 14-step lmer → significance-table pipeline for each of the four CELLTYPE × HORMONE strata. `run_lmer_chunk()` lives in `functions_analysis.R` and calls `exposure_lmer_pairwise()`, `interaction_lmer_pairwise()`, `summarize_to_wide()`, and `build_lmer_sig_table()`. LMER formulas include TIMEPOINT as a fixed effect when both `4` and `144` are present. Each call also returns `lmer_plot_data` — a tidy tibble (SEX / CELLTYPE / HORMONE / EXPOSURE / CYTOKINE / q / sig) used by the dotplot section below as the single source of statistical truth.
+Runs the 14-step lmer → significance-table pipeline for each of the four CELLTYPE × HORMONE strata. `run_lmer_chunk()` lives in `functions_analysis.R` and calls `exposure_lmer_pairwise()`, `interaction_lmer_pairwise()`, `summarize_to_wide()`, and `build_lmer_sig_table()`. LMER formulas include TIMEPOINT as a fixed effect when both `4` and `144` are present. Each call also returns `lmer_plot_data` — a tidy tibble (SEX / CELLTYPE / HORMONE / TIMEPOINT / EXPOSURE / CYTOKINE / q / sig) used by the dotplot section below as the single source of statistical truth.
 
 ## LAE — No Hormone
 
 ```{r lmer-lae-none}
-LAE_NONE_res  <- run_lmer_chunk("LAE_NONE", "LAE", "NONE", sala_full = WSTC_full)
+LAE_NONE_res  <- run_lmer_chunk("LAE_NONE", "LAE", "NONE", sala_full = WSTC_paired)
 LAE_NONE_sig  <- LAE_NONE_res$sig_table
 LAE_NONE_lmer_interaction <- LAE_NONE_res$lmer_interaction
 ```
@@ -240,7 +240,7 @@ LAE_NONE_lmer_interaction <- LAE_NONE_res$lmer_interaction
 ## LAE — Estradiol
 
 ```{r lmer-lae-e2}
-LAE_E2_res  <- run_lmer_chunk("LAE_E2", "LAE", "Estradiol", sala_full = WSTC_full)
+LAE_E2_res  <- run_lmer_chunk("LAE_E2", "LAE", "Estradiol", sala_full = WSTC_paired)
 LAE_E2_sig  <- LAE_E2_res$sig_table
 LAE_E2_lmer_interaction <- LAE_E2_res$lmer_interaction
 ```
@@ -248,7 +248,7 @@ LAE_E2_lmer_interaction <- LAE_E2_res$lmer_interaction
 ## SAE — No Hormone
 
 ```{r lmer-sae-none}
-SAE_NONE_res  <- run_lmer_chunk("SAE_NONE", "SAE", "NONE", sala_full = WSTC_full)
+SAE_NONE_res  <- run_lmer_chunk("SAE_NONE", "SAE", "NONE", sala_full = WSTC_paired)
 SAE_NONE_sig  <- SAE_NONE_res$sig_table
 SAE_NONE_lmer_interaction <- SAE_NONE_res$lmer_interaction
 ```
@@ -256,19 +256,9 @@ SAE_NONE_lmer_interaction <- SAE_NONE_res$lmer_interaction
 ## SAE — Estradiol
 
 ```{r lmer-sae-e2}
-SAE_E2_res  <- run_lmer_chunk("SAE_E2", "SAE", "Estradiol", sala_full = WSTC_full)
+SAE_E2_res  <- run_lmer_chunk("SAE_E2", "SAE", "Estradiol", sala_full = WSTC_paired)
 SAE_E2_sig  <- SAE_E2_res$sig_table
 SAE_E2_lmer_interaction <- SAE_E2_res$lmer_interaction
-
-# prove stat contrasts are within-timepoint PBS
-diag_tp <- lmer_results_all %>%
-  dplyr::count(SEX, CELLTYPE, HORMONE, TIMEPOINT, EXPOSURE, name = "n_tests")
-
-print(diag_tp)
-
-# should show separate rows for TIMEPOINT 4 and 144 per exposure
-stopifnot(all(c("4","144") %in% unique(as.character(lmer_results_all$TIMEPOINT))))
-
 ```
 
 ## Combine LMER plot data
@@ -285,9 +275,20 @@ lmer_results_all <- dplyr::bind_rows(
 cat("✓ lmer_results_all:", nrow(lmer_results_all), "rows\n")
 cat("  Significant (q <", ALPHA_Q, "):", sum(lmer_results_all$sig, na.rm = TRUE), "\n")
 
-# Long-format export: raw values + LMER significance per cytokine/exposure/sex
-WSTC_TMR_sig <- WSTC_full %>%
+stopifnot("TIMEPOINT" %in% names(lmer_results_all))
+
+diag_tp <- lmer_results_all %>%
+  dplyr::mutate(TIMEPOINT = sub("^_", "", as.character(TIMEPOINT))) %>%
+  dplyr::count(SEX, CELLTYPE, HORMONE, TIMEPOINT, EXPOSURE, name = "n_tests")
+
+print(diag_tp)
+
+stopifnot(all(c("4", "144") %in% unique(diag_tp$TIMEPOINT)))
+
+# Long-format export: raw values + LMER significance per cytokine/exposure/sex/timepoint
+WSTC_TMR_sig <- WSTC_paired %>%
   dplyr::filter(HORMONE == "NONE") %>%
+  dplyr::mutate(TIMEPOINT = sub("^_", "", as.character(TIMEPOINT))) %>%
   dplyr::select(
     SAMPLEID, CELLTYPE, PATIENTCODE, TIMEPOINT, SEX, EXPOSURE, HORMONE,
     dplyr::any_of("SMOKER"),
@@ -301,8 +302,9 @@ WSTC_TMR_sig <- WSTC_full %>%
   dplyr::left_join(
     lmer_results_all %>%
       dplyr::filter(HORMONE == "NONE") %>%
-      dplyr::select(SEX, CELLTYPE, HORMONE, EXPOSURE, CYTOKINE, q, sig),
-    by = c("SEX", "CELLTYPE", "HORMONE", "EXPOSURE", "CYTOKINE")
+      dplyr::mutate(TIMEPOINT = sub("^_", "", as.character(TIMEPOINT))) %>%
+      dplyr::select(SEX, CELLTYPE, HORMONE, TIMEPOINT, EXPOSURE, CYTOKINE, q, sig),
+    by = c("SEX", "CELLTYPE", "HORMONE", "TIMEPOINT", "EXPOSURE", "CYTOKINE")
   ) %>%
   dplyr::mutate(
     sig = ifelse(is.na(sig), FALSE, sig)   # PBS rows / untested combos = not sig
@@ -321,8 +323,9 @@ cat("\nIntersection:\n")
 ## Timepoint Comparisons
 ```{r timepoint-comparisons}
 
-# Build a long table for timepoint modeling (from WSTC_full wide cytokine matrix)
-WSTC_full_long <- WSTC_full %>%
+# Build a long table for timepoint modeling (from WSTC_paired wide cytokine matrix)
+WSTC_full_long <- WSTC_paired %>%
+  dplyr::mutate(TIMEPOINT = sub("^_", "", as.character(TIMEPOINT))) %>%
   dplyr::select(
     SAMPLEID, PATIENTCODE, CELLTYPE, HORMONE, TIMEPOINT, SEX, EXPOSURE,
     dplyr::any_of(cytokine_cols_all)
