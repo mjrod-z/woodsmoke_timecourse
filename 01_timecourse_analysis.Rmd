@@ -175,18 +175,13 @@ print(pair_audit, n = 200)
 
 # 2) For each exposure, keep only donor-strata with BOTH PBS and that exposure
 enforce_pairs_for_exposure <- function(df, exposure, pbs = PBS_LEVEL) {
-  key <- c("PATIENTCODE","CELLTYPE","HORMONE","SEX","TIMEPOINT")
-  keep_ids <- df %>%
-    dplyr::filter(EXPOSURE %in% c(pbs, exposure)) %>%
-    dplyr::distinct(dplyr::across(dplyr::all_of(c(key, "EXPOSURE")))) %>%
-    dplyr::mutate(flag = 1L) %>%
-    tidyr::pivot_wider(names_from = EXPOSURE, values_from = flag, values_fill = 0) %>%
-    dplyr::filter(.data[[pbs]] == 1L, .data[[exposure]] == 1L) %>%
-    dplyr::select(dplyr::all_of(key))
-
-  df %>%
-    dplyr::filter(EXPOSURE %in% c(pbs, exposure)) %>%
-    dplyr::inner_join(keep_ids, by = key)
+  diag <- log_paired_matching_results(
+    df = df,
+    exposure = exposure,
+    pbs = pbs,
+    verbose = TRUE
+  )
+  diag$paired
 }
 
 # 3) Build paired-only dataset across exposures
@@ -223,13 +218,18 @@ pair_check_by_exposure <- purrr::map_dfr(plot_exposures, function(exp) {
 })
 
 print(pair_check_by_exposure)
+
+pair_check_counts <- WSTC_paired %>%
+  dplyr::count(EXPOSURE, CELLTYPE, HORMONE, SEX, TIMEPOINT, name = "n_rows")
+
+print(pair_check_counts, n = 200)
 ```
 
 # Cytokine & Imputation Setup
 
 Imputes values below LLOD (LOD/√2) using a single global pass over `WSTC_paired`.
 The **sole cytokine-inclusion gate** is `impute_lod_sqrt2()`'s `ZERO_CUTOFF` (≤ 30% NA/zero
-per SEX group). The old dotplot-specific > 50% imputed filter is dropped: cytokine
+within each model stratum). The old dotplot-specific > 50% imputed filter is dropped: cytokine
 validity is now determined consistently by the LMER pipeline (`valid_cytokines` inside
 `run_lmer_chunk()`), which applies the identical `ZERO_CUTOFF`. The global `imp`/`df_use`
 objects are used only for visualization (log₂FC, bar heights, raw-data points).
@@ -321,7 +321,7 @@ stopifnot(all(c("4", "144") %in% unique(as.character(lmer_results_all$TIMEPOINT)
 # Long-format export: raw values + LMER significance per cytokine/exposure/sex/timepoint
 WSTC_TMR_sig <- WSTC_paired %>%
   dplyr::filter(HORMONE == "NONE") %>%
-  dplyr::mutate(TIMEPOINT = sub("^_", "", as.character(TIMEPOINT))) %>%
+  dplyr::mutate(TIMEPOINT = as.character(TIMEPOINT)) %>%
   dplyr::select(
     SAMPLEID, CELLTYPE, PATIENTCODE, TIMEPOINT, SEX, EXPOSURE, HORMONE,
     dplyr::any_of("SMOKER"),
@@ -335,7 +335,7 @@ WSTC_TMR_sig <- WSTC_paired %>%
   dplyr::left_join(
     lmer_results_all %>%
       dplyr::filter(HORMONE == "NONE") %>%
-      dplyr::mutate(TIMEPOINT = sub("^_", "", as.character(TIMEPOINT))) %>%
+      dplyr::mutate(TIMEPOINT = as.character(TIMEPOINT)) %>%
       dplyr::select(SEX, CELLTYPE, HORMONE, TIMEPOINT, EXPOSURE, CYTOKINE, q, sig),
     by = c("SEX", "CELLTYPE", "HORMONE", "TIMEPOINT", "EXPOSURE", "CYTOKINE")
   ) %>%
@@ -352,7 +352,7 @@ cat("✓ WSTC_no_ESTRADIOL_with_sig.csv saved (includes sig/q columns)\n")
 
 # Build a long table for timepoint modeling (from WSTC_paired wide cytokine matrix)
 WSTC_full_long <- WSTC_paired %>%
-  dplyr::mutate(TIMEPOINT = sub("^_", "", as.character(TIMEPOINT))) %>%
+  dplyr::mutate(TIMEPOINT = as.character(TIMEPOINT)) %>%
   dplyr::select(
     SAMPLEID, PATIENTCODE, CELLTYPE, HORMONE, TIMEPOINT, SEX, EXPOSURE,
     dplyr::any_of(cytokine_cols_all)
@@ -565,7 +565,11 @@ for (target_exposure in available_high_dose_exposures) {
     q         = as.numeric(q)
   ) %>%
   dplyr::group_by(SEX, CELLTYPE, HORMONE, TIMEPOINT, CYTOKINE) %>%
-  dplyr::summarise(q = min(q, na.rm = TRUE), sig = q < ALPHA_Q, .groups = "drop")
+  dplyr::summarise(
+    q = dplyr::if_else(all(is.na(q)), NA_real_, stats::median(q, na.rm = TRUE)),
+    sig = !is.na(q) & q < ALPHA_Q,
+    .groups = "drop"
+  )
 
   sig_map_all <- lmer_exp_All %>%
   dplyr::filter(CYTOKINE %in% keep_cytokines) %>%
@@ -577,7 +581,11 @@ for (target_exposure in available_high_dose_exposures) {
     q         = as.numeric(q)
   ) %>%
   dplyr::group_by(CELLTYPE, HORMONE, TIMEPOINT, CYTOKINE) %>%
-  dplyr::summarise(q = min(q, na.rm = TRUE), sig_pooled = q < ALPHA_Q, .groups = "drop")
+  dplyr::summarise(
+    q = dplyr::if_else(all(is.na(q)), NA_real_, stats::median(q, na.rm = TRUE)),
+    sig_pooled = !is.na(q) & q < ALPHA_Q,
+    .groups = "drop"
+  )
 
  # ── 7) Build plot data frames ─────────────────────────────────────────────
 make_plot_df <- function(df, grp_vars, sig_join, sig_col) {

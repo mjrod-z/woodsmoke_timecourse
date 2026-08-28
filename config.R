@@ -12,6 +12,9 @@ PATH_OUTPUT_FIGURES <- PATH_OUTPUT_FIGS         # RNA-seq alias
 PATH_OUTPUT_REPORT  <- file.path(PATH_OUTPUT, "reports")
 
 # ── Analysis constants ────────────────────────────────────────────────────────
+# ZERO_CUTOFF defines the maximum allowed NA/zero fraction for cytokine inclusion.
+# LMER uses this threshold within each model stratum (All/F/M) in run_lmer_chunk().
+# Global visualization imputation still uses a single pass on WSTC_paired.
 ZERO_CUTOFF       <- 0.30
 PSEUDOCOUNT       <- 1e-6
 ALPHA_Q           <- 0.05

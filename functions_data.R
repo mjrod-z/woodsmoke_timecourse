@@ -26,8 +26,63 @@ extract_timepoint_suffix <- function(sample_id) {
   sample_id <- trimws(as.character(sample_id))
   has_suffix <- grepl("(_144|_4)$", sample_id)
   out <- rep(NA_character_, length(sample_id))
+  # Returns bare timepoint labels ("4", "144"), not prefixed values.
   out[has_suffix] <- sub("^.*_(144|4)$", "\\1", sample_id[has_suffix])
   out
+}
+
+log_paired_matching_results <- function(df, exposure, pbs = PBS_LEVEL,
+                                        keys = c("PATIENTCODE", "CELLTYPE", "HORMONE", "SEX", "TIMEPOINT"),
+                                        verbose = TRUE) {
+  keys <- intersect(keys, names(df))
+  
+  if (!all(c("EXPOSURE", keys) %in% names(df))) {
+    stop("log_paired_matching_results(): missing required columns for paired diagnostics.")
+  }
+  
+  pair_df <- df %>%
+    dplyr::filter(EXPOSURE %in% c(pbs, exposure))
+  
+  strata <- pair_df %>%
+    dplyr::distinct(dplyr::across(dplyr::all_of(c(keys, "EXPOSURE")))) %>%
+    dplyr::mutate(present = 1L) %>%
+    tidyr::pivot_wider(
+      names_from = EXPOSURE,
+      values_from = present,
+      values_fill = 0
+    )
+  
+  if (!(pbs %in% names(strata))) strata[[pbs]] <- 0L
+  if (!(exposure %in% names(strata))) strata[[exposure]] <- 0L
+  
+  keep_ids <- strata %>%
+    dplyr::filter(.data[[pbs]] == 1L, .data[[exposure]] == 1L) %>%
+    dplyr::select(dplyr::all_of(keys))
+  
+  paired <- pair_df %>%
+    dplyr::inner_join(keep_ids, by = keys)
+  
+  summary_tbl <- tibble::tibble(
+    target_exposure = exposure,
+    n_rows_input = nrow(pair_df),
+    n_rows_paired = nrow(paired),
+    n_rows_dropped = nrow(pair_df) - nrow(paired),
+    n_strata_input = nrow(strata),
+    n_strata_paired = nrow(keep_ids),
+    n_strata_dropped = nrow(strata) - nrow(keep_ids)
+  )
+  
+  if (isTRUE(verbose)) {
+    cat(
+      "Pair diagnostics [", exposure, "] rows: ",
+      summary_tbl$n_rows_paired, "/", summary_tbl$n_rows_input,
+      " retained; strata: ", summary_tbl$n_strata_paired, "/",
+      summary_tbl$n_strata_input, " retained.\n",
+      sep = ""
+    )
+  }
+  
+  list(keep_ids = keep_ids, paired = paired, summary = summary_tbl)
 }
 
 # ============================================================================
@@ -201,6 +256,23 @@ standardize_exposure <- function(x) {
   
   # Canonical key: lowercase + strip non-alphanumeric
   key <- tolower(gsub("[^a-z0-9]", "", x))
+  recognized_keys <- c(
+    "pbs", "pbscontrol",
+    "untreated", "untreatedcontrol",
+    "pine5", "pine25", "pine",
+    "peat5", "peat25", "peat",
+    "eucalyptus5", "eucalyptus25", "eucalyptus",
+    "redoak5", "redoak25", "redoak", "redoakwood", "redoaksmoke"
+  )
+  unmatched <- !is_missing & nzchar(key) & !(key %in% recognized_keys)
+  if (any(unmatched)) {
+    unmatched_vals <- unique(x[unmatched])
+    preview <- paste(utils::head(unmatched_vals, 8), collapse = ", ")
+    suffix <- if (length(unmatched_vals) > 8) " ..." else ""
+    warning("standardize_exposure(): unrecognized exposure value(s): ",
+            preview, suffix,
+            ". Values will pass through after basic cleanup.")
+  }
   
   out <- dplyr::case_when(
     key %in% c("pbs", "pbscontrol") ~ "PBS_Control",
