@@ -62,10 +62,25 @@ make_log2fc_long <- function(df, cytokine_cols,
                   CYTOKINE,
                   log2_pbs = log2_val)
   
-  long %>%
+  out <- long %>%
     dplyr::filter(EXPOSURE != pbs_level) %>%
     dplyr::left_join(pbs, by = join_keys) %>%
     dplyr::mutate(log2FC = log2_val - log2_pbs)
+  
+  missing_pbs <- out %>%
+    dplyr::filter(is.na(log2_pbs)) %>%
+    dplyr::distinct(PATIENTCODE, SEX, CELLTYPE, HORMONE,
+                    dplyr::any_of("TIMEPOINT"), EXPOSURE, CYTOKINE)
+  
+  if (nrow(missing_pbs) > 0) {
+    warning(
+      "make_log2fc_long(): ", nrow(missing_pbs),
+      " treated donor-strata/cytokine rows are missing matched ",
+      pbs_level, " controls; log2FC is NA for those rows."
+    )
+  }
+  
+  out
 }
 
 # ── LMER screening: one exposure vs PBS, per CELLTYPE × HORMONE × SEX ────────
@@ -552,9 +567,35 @@ run_lmer_chunk <- function(label, celltype_filter, hormone_filter,
   d_sub <- sala_full %>%
     dplyr::filter(CELLTYPE == celltype_filter, HORMONE == hormone_filter)
   
-  imp_res    <- impute_lod_sqrt2(d_sub, cytokine_llod = llod_table, zero_cutoff = zero_co)
-  d_imp      <- imp_res$data
-  valid_cyts <- imp_res$valid_cytokines
+  cytokine_cols <- intersect(names(d_sub), llod_table$Analyte)
+  imp_res_all <- impute_lod_sqrt2(
+    d_sub,
+    cols = cytokine_cols,
+    cytokine_llod = llod_table,
+    zero_cutoff = zero_co
+  )
+  imp_res_f <- impute_lod_sqrt2(
+    d_sub %>% dplyr::filter(SEX == "F"),
+    cols = cytokine_cols,
+    cytokine_llod = llod_table,
+    zero_cutoff = zero_co
+  )
+  imp_res_m <- impute_lod_sqrt2(
+    d_sub %>% dplyr::filter(SEX == "M"),
+    cols = cytokine_cols,
+    cytokine_llod = llod_table,
+    zero_cutoff = zero_co
+  )
+  
+  d_imp <- imp_res_all$data
+  valid_cyts_all <- imp_res_all$valid_cytokines
+  valid_cyts_f <- imp_res_f$valid_cytokines
+  valid_cyts_m <- imp_res_m$valid_cytokines
+  valid_cyts <- sort(unique(c(valid_cyts_all, valid_cyts_f, valid_cyts_m)))
+  
+  cat("  ZERO_CUTOFF valid cytokines | All:", length(valid_cyts_all),
+      " F:", length(valid_cyts_f),
+      " M:", length(valid_cyts_m), "\n")
   
   if (length(valid_cyts) == 0) {
     warning("run_lmer_chunk(", label, "): no valid cytokines after ZERO_CUTOFF filtering.")
@@ -586,9 +627,15 @@ run_lmer_chunk <- function(label, celltype_filter, hormone_filter,
     dplyr::select(Measurement, `PBS_Control`) %>%
     dplyr::arrange(Measurement)
   
-  lmer_All <- exposure_lmer_pairwise_by_timepoint(d_filt, "All", "fdr", valid_cyts, ctrl_level = PBS_LEVEL)
-  lmer_F   <- exposure_lmer_pairwise_by_timepoint(d_filt, "F",   "fdr", valid_cyts, ctrl_level = PBS_LEVEL)
-  lmer_M   <- exposure_lmer_pairwise_by_timepoint(d_filt, "M",   "fdr", valid_cyts, ctrl_level = PBS_LEVEL)
+  lmer_All <- exposure_lmer_pairwise_by_timepoint(
+    d_filt, "All", "fdr", valid_cyts_all, ctrl_level = PBS_LEVEL
+  )
+  lmer_F   <- exposure_lmer_pairwise_by_timepoint(
+    d_filt, "F",   "fdr", valid_cyts_f, ctrl_level = PBS_LEVEL
+  )
+  lmer_M   <- exposure_lmer_pairwise_by_timepoint(
+    d_filt, "M",   "fdr", valid_cyts_m, ctrl_level = PBS_LEVEL
+  )
   lmer_int <- interaction_lmer_pairwise(d_filt, "All", "fdr", valid_cyts)
   
   # Convert LMER results to plot-compatible format (used by cytokine dotplots
@@ -760,10 +807,17 @@ exposure_lmer_pairwise_by_timepoint <- function(
   d0 <- d0 %>%
     dplyr::mutate(
       TIMEPOINT   = factor(as.character(TIMEPOINT), levels = time_levels),
-      EXPOSURE    = as.character(EXPOSURE),
+      EXPOSURE    = factor(EXPOSURE),
       PATIENTCODE = factor(PATIENTCODE)
     ) %>%
     dplyr::filter(!is.na(TIMEPOINT), !is.na(EXPOSURE), !is.na(PATIENTCODE))
+  
+  if (ctrl_level %in% levels(d0$EXPOSURE)) {
+    d0$EXPOSURE <- stats::relevel(d0$EXPOSURE, ref = ctrl_level)
+  } else {
+    warning("exposure_lmer_pairwise_by_timepoint(): control level '",
+            ctrl_level, "' not present after filtering.")
+  }
   
   if (is.null(response_columns)) {
     response_columns <- names(d0)[vapply(d0, is.numeric, logical(1))]
@@ -811,9 +865,21 @@ exposure_lmer_pairwise_by_timepoint <- function(
     if (length(trt_levels) == 0) next
     
     for (trt in trt_levels) {
+      d_pair_input <- d_tp %>% dplyr::filter(EXPOSURE %in% c(ctrl_level, trt))
+      n_pair_input <- nrow(d_pair_input)
+      
       # strict pair-match for THIS exposure vs PBS at THIS timepoint
       d_pair <- match_pairs_for_exposure(d_tp, exposure = trt, pbs = ctrl_level)
-      if (nrow(d_pair) == 0) next
+      if (nrow(d_pair) == 0) {
+        cat("  [pairing] group=", group, " timepoint=", tp, " exposure=", trt,
+            " retained 0/", n_pair_input, " rows after matching to ", ctrl_level, "\n",
+            sep = "")
+        next
+      }
+      cat("  [pairing] group=", group, " timepoint=", tp, " exposure=", trt,
+          " retained ", nrow(d_pair), "/", n_pair_input,
+          " rows after matching to ", ctrl_level, "\n",
+          sep = "")
       
       # Ensure both levels exist post-match
       ex_levels <- unique(as.character(d_pair$EXPOSURE))
@@ -863,6 +929,9 @@ exposure_lmer_pairwise_by_timepoint <- function(
         
         # donor count in matched pair set (for diagnostics)
         n_donors <- dplyr::n_distinct(df_resp$PATIENTCODE)
+        n_rows_pair <- nrow(df_resp)
+        n_ctrl_rows <- sum(as.character(df_resp$EXPOSURE) == ctrl_level, na.rm = TRUE)
+        n_trt_rows <- sum(as.character(df_resp$EXPOSURE) == trt, na.rm = TRUE)
         
         out[[idx]] <- tibble::tibble(
           contrast  = s$contrast[1],
@@ -874,14 +943,35 @@ exposure_lmer_pairwise_by_timepoint <- function(
           response  = resp,
           TIMEPOINT = as.character(tp),
           SEX       = ifelse(group == "All", "All", group),
-          n_donors  = n_donors
+          n_donors  = n_donors,
+          n_rows_pair = n_rows_pair,
+          n_ctrl_rows = n_ctrl_rows,
+          n_trt_rows = n_trt_rows
         )
         idx <- idx + 1L
       }
     }
   }
   
-  dplyr::bind_rows(out)
+  res <- dplyr::bind_rows(out)
+  if (nrow(res) == 0) {
+    return(tibble::tibble(
+      contrast = character(),
+      estimate = numeric(),
+      SE = numeric(),
+      df = numeric(),
+      t.ratio = numeric(),
+      p.value = numeric(),
+      response = character(),
+      TIMEPOINT = character(),
+      SEX = character(),
+      n_donors = integer(),
+      n_rows_pair = integer(),
+      n_ctrl_rows = integer(),
+      n_trt_rows = integer()
+    ))
+  }
+  res
 }
 
 # FDR correction matches build_lmer_sig_table() exactly:
@@ -912,7 +1002,7 @@ lmer_results_to_plot_format <- function(lmer_All, lmer_F, lmer_M,
   )
   
   combined %>%
-    dplyr::group_by(SEX, CELLTYPE, HORMONE, TIMEPOINT, CYTOKINE) %>%
+    dplyr::group_by(CYTOKINE) %>%
     dplyr::mutate(q = p.adjust(p.value, method = "fdr")) %>%
     dplyr::ungroup() %>%
     dplyr::mutate(sig = q < alpha)
@@ -929,18 +1019,8 @@ impute_lod_sqrt2 <- function(input_data, cols = NULL, cytokine_llod, zero_cutoff
   valid_cytokines <- cols[vapply(cols, function(col) {
     vals <- suppressWarnings(as.numeric(input_data[[col]]))
     if (all(is.na(vals))) return(FALSE)
-    
-    if ("SEX" %in% names(input_data)) {
-      max_zero <- input_data %>%
-        dplyr::mutate(.val = vals) %>%
-        dplyr::group_by(SEX) %>%
-        dplyr::summarise(p_zero = mean(is.na(.val) | .val <= 0), .groups = "drop") %>%
-        dplyr::summarise(max_p = max(p_zero, na.rm = TRUE)) %>%
-        dplyr::pull(max_p)
-      return(is.finite(max_zero) && max_zero <= zero_cutoff)
-    }
-    
-    mean(is.na(vals) | vals <= 0) <= zero_cutoff
+    p_zero <- mean(is.na(vals) | vals <= 0)
+    is.finite(p_zero) && p_zero <= zero_cutoff
   }, logical(1))]
   
   skipped_cytokines <- setdiff(cols, valid_cytokines)
