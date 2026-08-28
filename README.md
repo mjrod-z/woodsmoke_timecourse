@@ -1,6 +1,6 @@
-# Small & Large Airway Cytokine Analysis
+# Small & Large Airway Cytokine Timecourse Analysis
 
-Analysis code for studying cytokine inflammatory responses in small airway epithelial (SAE) and large airway epithelial (LAE) cells exposed to biomass smoke particulates.
+Analysis code for studying cytokine inflammatory responses in small airway epithelial (SAE) and large airway epithelial (LAE) cells exposed to biomass smoke particulates across two timepoints (4 h and 144 h post-exposure).
 
 ## Overview
 
@@ -8,16 +8,16 @@ This repository contains modular R code for:
 
 - MSD cytokine data loading and preprocessing
 - LLOD-based imputation
-- Mixed-effects model screening across airway type, hormone treatment, and sex
-- Cytokine dotplots, barplots, and histograms
-- Smoker variance partition analysis
+- Timepoint-aware (`_4`, `_144`) SALA assembly and mixed-effects model screening across airway type, hormone treatment, sex, and timepoint
+- Cytokine dotplots, barplots, and histograms (faceted by `CELLTYPE × TIMEPOINT`)
+- Variance partitioning and PCA across timepoints
 - LDH / TEER analysis scaffolding
 
 ## Project structure
 
 ```text
 .
-├── 01_sala_analysis.Rmd
+├── 01_timecourse_analysis.Rmd
 ├── README.md
 ├── _load_all.R
 ├── config.R

@@ -62,6 +62,7 @@ required_objects <- c(
   "save_plot",
   "save_table",
   "GENE_BACKGROUND_THRESHOLD",
+  "TIMEPOINT_LEVELS",
   "PATH_DATA_RAW",
   "PATH_DATA_PROCESSED",
   "PATH_OUTPUT_FIGS",
