@@ -21,6 +21,7 @@ PBS_LEVEL         <- "PBS_Control"  # Changed from "PBS Control"
 EXCLUDE_EXPOSURES <- c("Untreated_Control", "Peat_5")
 
 ALL_HIGH_DOSE_EXPOSURES <- c("Pine_25", "Peat_25", "Eucalyptus_25", "RedOak_25")
+WSTC_LABEL <- "WSTC"
 
 EXPOSURE_COLORS_DEEP <- c(
   "Pine_25"       = "#1B4F8A",
@@ -90,7 +91,6 @@ cytokine_llod <- data.frame(
   stringsAsFactors = FALSE
 )
 
-# Legacy LLOQ table (used in older ART chunks)
 cytokine_lloq <- data.frame(
   Analyte = c(
     "EOTAXIN","EOTAXIN3","GMCSF","IFNY","IL1A","IL1B","IL2","IL4","IL5","IL6","IL7",
