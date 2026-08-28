@@ -34,37 +34,30 @@ extract_timepoint_suffix <- function(sample_id) {
 # SALA-SPECIFIC DATA FUNCTIONS
 # ============================================================================
 
-average_nonzero_by_sample <- function(data) {
-  # Average replicate measurements within each sample.
-  # All numeric values (including zeros) are included in the mean so that the
-  # downstream LOD-imputation step operates on unbiased sample averages.
-  # NA values are excluded via na.rm = TRUE.
+average_nonzero_by_sample <- function(data, sample_id_col = "SAMPLEID") {
+  if (!sample_id_col %in% names(data)) {
+    stop("average_nonzero_by_sample(): missing sample ID column: ", sample_id_col)
+  }
   
-  numeric_cols <- names(data)[sapply(data, is.numeric)]
-  id_col <- names(data)[!names(data) %in% numeric_cols][1]
-  
-  if (is.na(id_col)) {
-    stop("average_nonzero_by_sample(): no sample ID column found")
+  numeric_cols <- names(data)[vapply(data, is.numeric, logical(1))]
+  if (length(numeric_cols) == 0) {
+    stop("average_nonzero_by_sample(): no numeric measurement columns found")
   }
   
   data %>%
-    dplyr::group_by(.data[[id_col]]) %>%
+    dplyr::group_by(.data[[sample_id_col]]) %>%
     dplyr::summarise(
-      dplyr::across(dplyr::all_of(numeric_cols),
-                    ~ mean(., na.rm = TRUE)),
+      dplyr::across(dplyr::all_of(numeric_cols), ~ mean(.x, na.rm = TRUE)),
       .groups = "drop"
-    )
+    ) %>%
+    dplyr::rename(SAMPLEID = .data[[sample_id_col]])
 }
 
 build_sala_full <- function(averaged_data, metadata) {
-  if (!"SAMPLEID" %in% names(averaged_data)) {
-    stop("build_sala_full(): averaged_data must contain SAMPLEID.")
-  }
-  if (!"SAMPLEID" %in% names(metadata)) {
-    stop("build_sala_full(): metadata must contain SAMPLEID.")
-  }
+  if (!"SAMPLEID" %in% names(averaged_data)) stop("averaged_data must contain SAMPLEID")
+  if (!"SAMPLEID" %in% names(metadata)) stop("metadata must contain SAMPLEID")
   
-  norm_id <- function(x) {
+  norm_base <- function(x) {
     x <- trimws(as.character(x))
     x <- toupper(x)
     x <- sub("(_144|_4)$", "", x)
@@ -72,23 +65,50 @@ build_sala_full <- function(averaged_data, metadata) {
     x
   }
   
+  # assay side: derive timepoint from SAMPLEID
   avg <- averaged_data %>%
     dplyr::mutate(
       SAMPLEID      = as.character(SAMPLEID),
       TIMEPOINT     = extract_timepoint_suffix(SAMPLEID),
       SAMPLEID_BASE = sub("(_144|_4)$", "", SAMPLEID),
-      JOIN_ID       = norm_id(SAMPLEID_BASE)
+      JOIN_BASE     = norm_base(SAMPLEID_BASE)
     )
   
-  meta <- metadata %>%
+  # metadata side: normalize to base key
+  meta0 <- metadata %>%
     dplyr::mutate(
       META_SAMPLEID = as.character(SAMPLEID),
-      JOIN_ID       = norm_id(META_SAMPLEID)
+      JOIN_BASE     = norm_base(META_SAMPLEID)
+    )
+  
+  # columns that must be consistent within duplicated JOIN_BASE
+  key_fields <- intersect(c("PATIENTCODE", "CELLTYPE", "HORMONE", "SEX", "EXPOSURE", "SMOKER"), names(meta0))
+  
+  # detect conflicting duplicates
+  conflicts <- meta0 %>%
+    dplyr::group_by(JOIN_BASE) %>%
+    dplyr::summarise(
+      dplyr::across(dplyr::all_of(key_fields), ~ dplyr::n_distinct(.x, na.rm = TRUE)),
+      .groups = "drop"
     ) %>%
+    dplyr::filter(dplyr::if_any(dplyr::all_of(key_fields), ~ .x > 1))
+  
+  if (nrow(conflicts) > 0) {
+    stop(
+      "build_sala_full(): metadata duplicates with conflicting values for JOIN_BASE. Examples: ",
+      paste(utils::head(conflicts$JOIN_BASE, 10), collapse = ", ")
+    )
+  }
+  
+  # collapse duplicates safely (identical rows per JOIN_BASE)
+  meta <- meta0 %>%
+    dplyr::group_by(JOIN_BASE) %>%
+    dplyr::slice(1) %>%
+    dplyr::ungroup() %>%
     dplyr::select(-dplyr::any_of("SAMPLEID"))
   
   merged <- avg %>%
-    dplyr::left_join(meta, by = "JOIN_ID")
+    dplyr::left_join(meta, by = "JOIN_BASE")
   
   if (!"PATIENTCODE" %in% names(merged)) {
     merged <- merged %>% dplyr::mutate(PATIENTCODE = SAMPLEID_BASE)
@@ -99,19 +119,41 @@ build_sala_full <- function(averaged_data, metadata) {
   
   merged <- merged %>%
     dplyr::mutate(
-      CELLTYPE    = factor(CELLTYPE,    levels = CELLTYPE_LEVELS),
-      HORMONE     = factor(HORMONE,     levels = HORMONE_LEVELS),
-      TIMEPOINT   = factor(TIMEPOINT,   levels = TIMEPOINT_LEVELS),
-      SEX         = factor(SEX,         levels = SEX_LEVELS),
+      CELLTYPE    = factor(CELLTYPE, levels = CELLTYPE_LEVELS),
+      HORMONE     = factor(HORMONE, levels = HORMONE_LEVELS),
+      TIMEPOINT   = factor(as.character(TIMEPOINT), levels = TIMEPOINT_LEVELS),
+      SEX         = factor(SEX, levels = SEX_LEVELS),
       EXPOSURE    = standardize_exposure(EXPOSURE),
-      PATIENTCODE = factor(PATIENTCODE)
-    )
-  
-  merged <- merged %>%
-    dplyr::select(-dplyr::any_of(c("SAMPLEID_BASE", "JOIN_ID", "META_SAMPLEID")))
+      PATIENTCODE = factor(toupper(as.character(PATIENTCODE)))
+    ) %>%
+    dplyr::select(-dplyr::any_of(c("SAMPLEID_BASE", "JOIN_BASE", "META_SAMPLEID")))
   
   merged
 }
+
+assert_analysis_metadata <- function(df) {
+  required <- c("SAMPLEID","PATIENTCODE","CELLTYPE","HORMONE","SEX","TIMEPOINT","EXPOSURE")
+  miss <- setdiff(required, names(df))
+  if (length(miss)) stop("Missing required analysis columns: ", paste(miss, collapse = ", "))
+  
+  bad <- df %>%
+    dplyr::filter(
+      is.na(SAMPLEID) | is.na(PATIENTCODE) | is.na(CELLTYPE) |
+        is.na(HORMONE)  | is.na(SEX)         | is.na(TIMEPOINT) | is.na(EXPOSURE)
+    )
+  if (nrow(bad) > 0) {
+    stop("Metadata integrity failure: ", nrow(bad), " rows contain NA in required grouping columns.")
+  }
+  
+  # one row per biological sample after averaging
+  dup_sample <- df %>% dplyr::count(SAMPLEID) %>% dplyr::filter(n > 1)
+  if (nrow(dup_sample) > 0) {
+    stop("SAMPLEID not unique after build_sala_full(); duplicates detected.")
+  }
+  
+  invisible(TRUE)
+}
+
 
 apply_factor_spec <- function(data, 
                               celltype_levels = CELLTYPE_LEVELS,
