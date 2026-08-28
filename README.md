@@ -8,7 +8,7 @@ This repository contains modular R code for:
 
 - MSD cytokine data loading and preprocessing
 - LLOD-based imputation
-- Timepoint-aware (`_4`, `_144`) SALA assembly and mixed-effects model screening across airway type, hormone treatment, sex, and timepoint
+- Timepoint-aware (`_4`, `_144`) WSTC assembly and mixed-effects model screening across airway type, hormone treatment, sex, and timepoint
 - Cytokine dotplots, barplots, and histograms (faceted by `CELLTYPE × TIMEPOINT`)
 - Variance partitioning and PCA across timepoints
 - LDH / TEER analysis scaffolding

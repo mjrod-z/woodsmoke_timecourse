@@ -16,6 +16,7 @@ ZERO_CUTOFF       <- 0.30
 PSEUDOCOUNT       <- 1e-6
 ALPHA_Q           <- 0.05
 TREND_ALPHA       <- 0.20
+WSTC_LABEL        <- "WSTC"
 PBS_LEVEL         <- "PBS_Control"  # Changed from "PBS Control"
 EXCLUDE_EXPOSURES <- c("Untreated_Control", "Peat_5")
 
