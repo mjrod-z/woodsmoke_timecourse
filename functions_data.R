@@ -6,10 +6,6 @@ suppressPackageStartupMessages({
   library(readr)
 })
 
-# ============================================================================
-# UTILITY FUNCTIONS
-# ============================================================================
-
 safe_name <- function(x) {
   x <- as.character(x)
   x <- gsub("[^A-Za-z0-9_-]", "_", x)
@@ -30,20 +26,13 @@ extract_timepoint_suffix <- function(sample_id) {
   out
 }
 
-# ============================================================================
-# SALA-SPECIFIC DATA FUNCTIONS
-# ============================================================================
-
 average_nonzero_by_sample <- function(data) {
   numeric_cols <- names(data)[sapply(data, is.numeric)]
   id_col <- names(data)[!names(data) %in% numeric_cols][1]
   if (is.na(id_col)) stop("average_nonzero_by_sample(): no sample ID column found")
   data %>%
     dplyr::group_by(.data[[id_col]]) %>%
-    dplyr::summarise(
-      dplyr::across(dplyr::all_of(numeric_cols), ~ mean(., na.rm = TRUE)),
-      .groups = "drop"
-    )
+    dplyr::summarise(dplyr::across(dplyr::all_of(numeric_cols), ~ mean(., na.rm = TRUE)), .groups = "drop")
 }
 
 build_sala_full <- function(averaged_data, metadata) {
@@ -59,8 +48,8 @@ build_sala_full <- function(averaged_data, metadata) {
 
   averaged_prepped <- averaged_data %>%
     dplyr::mutate(
-      SAMPLEID     = as.character(SAMPLEID),
-      TIMEPOINT    = extract_timepoint_suffix(SAMPLEID),
+      SAMPLEID      = as.character(SAMPLEID),
+      TIMEPOINT     = extract_timepoint_suffix(SAMPLEID),
       SAMPLEID_BASE = sub("(_144|_4)$", "", SAMPLEID)
     )
 
@@ -110,17 +99,13 @@ apply_factor_spec <- function(data,
     )
 }
 
-# ============================================================================
-# STANDARDIZATION FUNCTIONS
-# ============================================================================
-
 standardize_sample_id <- function(x) {
   x <- trimws(as.character(x))
   x <- gsub("\\.fastq.*$", "", x, ignore.case = TRUE)
   x <- gsub("\\.bam$", "", x, ignore.case = TRUE)
   x <- gsub("^X", "", x)
-  x <- gsub("^SALA-", "SALA", x)
-  x <- gsub("^SALA_", "SALA", x)
+  x <- gsub("^SALA-", "WSTC", x)
+  x <- gsub("^SALA_", "WSTC", x)
   gsub("[[:space:]]+", "", x)
 }
 
@@ -141,6 +126,7 @@ standardize_exposure <- function(x) {
   x <- gsub("^PBS$", "PBS_Control", x, ignore.case = TRUE)
   x <- gsub("^Untreated Control$", "Untreated_Control", x, ignore.case = TRUE)
   x <- gsub("^Untreated$", "Untreated_Control", x, ignore.case = TRUE)
+  x <- gsub("^SALA", "WSTC", x)
   x <- gsub(" ", "_", x)
   x <- gsub("_+", "_", x)
   gsub("_$", "", x)
