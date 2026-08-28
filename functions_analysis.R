@@ -39,6 +39,10 @@ make_log2fc_long <- function(df, cytokine_cols,
       EXPOSURE    = factor(EXPOSURE),
       PATIENTCODE = factor(PATIENTCODE)
     )
+  if ("TIMEPOINT" %in% names(d)) {
+    d <- d %>%
+      dplyr::mutate(TIMEPOINT = factor(TIMEPOINT, levels = TIMEPOINT_LEVELS))
+  }
   
   long <- d %>%
     tidyr::pivot_longer(cols = dplyr::all_of(cytokine_cols),
@@ -46,15 +50,21 @@ make_log2fc_long <- function(df, cytokine_cols,
     dplyr::filter(!is.na(VALUE)) %>%
     dplyr::mutate(log2_val = log2(as.numeric(VALUE) + pseudocount))
   
+  join_keys <- c("PATIENTCODE", "SEX", "CELLTYPE", "HORMONE", "CYTOKINE")
+  if ("TIMEPOINT" %in% names(long)) {
+    join_keys <- c(join_keys, "TIMEPOINT")
+  }
+  
   pbs <- long %>%
     dplyr::filter(EXPOSURE == pbs_level) %>%
-    dplyr::select(PATIENTCODE, SEX, CELLTYPE, HORMONE, CYTOKINE,
+    dplyr::select(PATIENTCODE, SEX, CELLTYPE, HORMONE,
+                  dplyr::any_of("TIMEPOINT"),
+                  CYTOKINE,
                   log2_pbs = log2_val)
   
   long %>%
     dplyr::filter(EXPOSURE != pbs_level) %>%
-    dplyr::left_join(pbs,
-                     by = c("PATIENTCODE","SEX","CELLTYPE","HORMONE","CYTOKINE")) %>%
+    dplyr::left_join(pbs, by = join_keys) %>%
     dplyr::mutate(log2FC = log2_val - log2_pbs)
 }
 
@@ -87,6 +97,10 @@ screen_one_exposure_lmer_log2 <- function(df, cytokine_cols, target_exposure,
   
   if (group %in% c("F","M"))
     d0 <- d0 %>% dplyr::filter(as.character(SEX) == group)
+  if ("TIMEPOINT" %in% names(d0)) {
+    d0 <- d0 %>%
+      dplyr::mutate(TIMEPOINT = factor(TIMEPOINT, levels = TIMEPOINT_LEVELS))
+  }
   
   if (ctrl_level %in% levels(d0$EXPOSURE))
     d0$EXPOSURE <- relevel(d0$EXPOSURE, ref = ctrl_level)
@@ -133,7 +147,13 @@ screen_one_exposure_lmer_log2 <- function(df, cytokine_cols, target_exposure,
       if (!all(c(ctrl_level, target_exposure) %in% unique(dat$EXPOSURE))) next
       
       dat  <- dat %>% dplyr::mutate(resp = log2(.data[[cyt]] + pseudocount))
-      form <- resp ~ EXPOSURE + (1 | PATIENTCODE)
+      tp_term <- if ("TIMEPOINT" %in% names(dat) &&
+                     dplyr::n_distinct(dat$TIMEPOINT[!is.na(dat$TIMEPOINT)]) > 1) {
+        " + TIMEPOINT"
+      } else {
+        ""
+      }
+      form <- as.formula(paste0("resp ~ EXPOSURE", tp_term, " + (1 | PATIENTCODE)"))
       
       fit <- try(lme4::lmer(form, data = dat), silent = TRUE)
       if (inherits(fit, "try-error")) next
@@ -183,6 +203,10 @@ exposure_lmer_pairwise <- function(data, group = "All", adjust_method = "fdr",
                                    ctrl_level = "PBS_Control") {
   if (group != "All" && "SEX" %in% names(data))
     data <- data %>% dplyr::filter(SEX == group)
+  if ("TIMEPOINT" %in% names(data)) {
+    data <- data %>%
+      dplyr::mutate(TIMEPOINT = factor(TIMEPOINT, levels = TIMEPOINT_LEVELS))
+  }
   
   stopifnot("EXPOSURE" %in% names(data), "PATIENTCODE" %in% names(data))
   
@@ -205,8 +229,14 @@ exposure_lmer_pairwise <- function(data, group = "All", adjust_method = "fdr",
     df <- data %>% dplyr::filter(!is.na(.data[[resp]]))
     if (length(unique(df$EXPOSURE)) < 2) next
     
+    tp_term <- if ("TIMEPOINT" %in% names(df) &&
+                   dplyr::n_distinct(df$TIMEPOINT[!is.na(df$TIMEPOINT)]) > 1) {
+      " + TIMEPOINT"
+    } else {
+      ""
+    }
     model <- try(
-      lme4::lmer(as.formula(paste(resp, "~ EXPOSURE + (1|PATIENTCODE)")),
+      lme4::lmer(as.formula(paste0(resp, " ~ EXPOSURE", tp_term, " + (1|PATIENTCODE)")),
                  data = df),
       silent = TRUE)
     if (inherits(model, "try-error")) { warning("Model failed for ", resp); next }
@@ -230,6 +260,10 @@ interaction_lmer_pairwise <- function(data, group = "All", adjust_method = "fdr"
                                       ctrl_level = "PBS_Control") {
   if (group != "All" && "SEX" %in% names(data))
     data <- data %>% dplyr::filter(SEX == group)
+  if ("TIMEPOINT" %in% names(data)) {
+    data <- data %>%
+      dplyr::mutate(TIMEPOINT = factor(TIMEPOINT, levels = TIMEPOINT_LEVELS))
+  }
   
   stopifnot("EXPOSURE" %in% names(data), "PATIENTCODE" %in% names(data),
             "SEX"      %in% names(data))
@@ -254,9 +288,15 @@ interaction_lmer_pairwise <- function(data, group = "All", adjust_method = "fdr"
     df <- data %>% dplyr::filter(!is.na(.data[[resp]]))
     if (length(unique(df$EXPOSURE)) < 2 || length(unique(df$SEX)) < 2) next
     
+    tp_term <- if ("TIMEPOINT" %in% names(df) &&
+                   dplyr::n_distinct(df$TIMEPOINT[!is.na(df$TIMEPOINT)]) > 1) {
+      " + TIMEPOINT"
+    } else {
+      ""
+    }
     model <- try(
       lme4::lmer(
-        as.formula(paste(resp, "~ EXPOSURE * SEX + (1|PATIENTCODE)")),
+        as.formula(paste0(resp, " ~ EXPOSURE * SEX", tp_term, " + (1|PATIENTCODE)")),
         data = df),
       silent = TRUE)
     if (inherits(model, "try-error")) {
@@ -300,6 +340,10 @@ exposure_art_pairwise <- function(data, group = "All", adjust_method = "fdr",
       EXPOSURE    = factor(EXPOSURE),
       PATIENTCODE = factor(PATIENTCODE)
     )
+  if ("TIMEPOINT" %in% names(filtered_data)) {
+    filtered_data <- filtered_data %>%
+      dplyr::mutate(TIMEPOINT = factor(TIMEPOINT, levels = TIMEPOINT_LEVELS))
+  }
   
   if (is.null(response_columns))
     response_columns <- names(filtered_data)[sapply(filtered_data, is.numeric)]
@@ -311,10 +355,17 @@ exposure_art_pairwise <- function(data, group = "All", adjust_method = "fdr",
       warning("Column ", response, " not found"); next
     }
     
-    formula <- if (group == "All") {
-      as.formula(paste(response, "~ EXPOSURE * SEX + (1|PATIENTCODE)"))
+    tp_term <- if ("TIMEPOINT" %in% names(filtered_data) &&
+                   dplyr::n_distinct(filtered_data$TIMEPOINT[!is.na(filtered_data$TIMEPOINT)]) > 1) {
+      " + TIMEPOINT"
     } else {
-      as.formula(paste(response, "~ EXPOSURE + (1|PATIENTCODE)"))
+      ""
+    }
+    
+    formula <- if (group == "All") {
+      as.formula(paste0(response, " ~ EXPOSURE * SEX", tp_term, " + (1|PATIENTCODE)"))
+    } else {
+      as.formula(paste0(response, " ~ EXPOSURE", tp_term, " + (1|PATIENTCODE)"))
     }
     
     m.art <- try(ARTool::art(formula, data = filtered_data), silent = TRUE)
@@ -382,6 +433,10 @@ run_lmer_chunk <- function(label, celltype_filter, hormone_filter,
     dplyr::mutate(EXPOSURE    = factor(EXPOSURE),
                   SEX         = factor(SEX),
                   PATIENTCODE = factor(PATIENTCODE))
+  if ("TIMEPOINT" %in% names(d_filt)) {
+    d_filt <- d_filt %>%
+      dplyr::mutate(TIMEPOINT = factor(TIMEPOINT, levels = TIMEPOINT_LEVELS))
+  }
   
   msd_sum <- summarize_to_wide(d_filt, measure_vars = valid_cyts)
   pbs_ctl <- msd_sum %>%
