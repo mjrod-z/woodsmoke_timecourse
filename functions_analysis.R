@@ -200,7 +200,8 @@ screen_one_exposure_lmer_log2 <- function(df, cytokine_cols, target_exposure,
 
 exposure_lmer_pairwise <- function(data, group = "All", adjust_method = "fdr",
                                    response_columns = NULL,
-                                   ctrl_level = "PBS_Control") {
+                                   ctrl_level = "PBS_Control",
+                                   by_timepoint = FALSE) {
   if (group != "All" && "SEX" %in% names(data))
     data <- data %>% dplyr::filter(SEX == group)
   if ("TIMEPOINT" %in% names(data)) {
@@ -241,11 +242,30 @@ exposure_lmer_pairwise <- function(data, group = "All", adjust_method = "fdr",
       silent = TRUE)
     if (inherits(model, "try-error")) { warning("Model failed for ", resp); next }
     
-    emm      <- emmeans::emmeans(model, ~ EXPOSURE, weights = "equal")
+    has_timepoint <- by_timepoint &&
+      "TIMEPOINT" %in% names(df) &&
+      dplyr::n_distinct(df$TIMEPOINT[!is.na(df$TIMEPOINT)]) > 1
+    emm_spec <- if (has_timepoint) {
+      stats::as.formula("~ EXPOSURE | TIMEPOINT")
+    } else {
+      stats::as.formula("~ EXPOSURE")
+    }
+    emm      <- emmeans::emmeans(model, emm_spec, weights = "equal")
     ctrl_idx <- which(levels(data$EXPOSURE) == ctrl_level)
     pairwise <- emmeans::contrast(emm, method = "trt.vs.ctrl",
                                   ref = ctrl_idx, adjust = adjust_method)
     pairwise_df          <- as.data.frame(summary(pairwise))
+    if (by_timepoint &&
+        "TIMEPOINT" %in% names(df) &&
+        !"TIMEPOINT" %in% names(pairwise_df)) {
+      if (has_timepoint) {
+        stop("TIMEPOINT missing from timepoint-specific contrast output for ", resp)
+      }
+      tp_values <- unique(as.character(stats::na.omit(df$TIMEPOINT)))
+      if (length(tp_values) == 1) {
+        pairwise_df$TIMEPOINT <- tp_values
+      }
+    }
     pairwise_df$response <- resp
     results_list[[resp]] <- pairwise_df
   }
@@ -586,6 +606,15 @@ run_lmer_chunk <- function(label, celltype_filter, hormone_filter,
     dplyr::select(Measurement, `PBS_Control`) %>%
     dplyr::arrange(Measurement)
   
+  lmer_All <- exposure_lmer_pairwise(d_filt, "All", "fdr", valid_cyts)
+  lmer_F   <- exposure_lmer_pairwise(d_filt, "F",   "fdr", valid_cyts)
+  lmer_M   <- exposure_lmer_pairwise(d_filt, "M",   "fdr", valid_cyts)
+  lmer_plot_All <- exposure_lmer_pairwise(d_filt, "All", "fdr", valid_cyts,
+                                          by_timepoint = TRUE)
+  lmer_plot_F   <- exposure_lmer_pairwise(d_filt, "F",   "fdr", valid_cyts,
+                                          by_timepoint = TRUE)
+  lmer_plot_M   <- exposure_lmer_pairwise(d_filt, "M",   "fdr", valid_cyts,
+                                          by_timepoint = TRUE)
   lmer_All <- exposure_lmer_pairwise_by_timepoint(d_filt, "All", "fdr", valid_cyts, ctrl_level = PBS_LEVEL)
   lmer_F   <- exposure_lmer_pairwise_by_timepoint(d_filt, "F",   "fdr", valid_cyts, ctrl_level = PBS_LEVEL)
   lmer_M   <- exposure_lmer_pairwise_by_timepoint(d_filt, "M",   "fdr", valid_cyts, ctrl_level = PBS_LEVEL)
@@ -594,7 +623,7 @@ run_lmer_chunk <- function(label, celltype_filter, hormone_filter,
   # Convert LMER results to plot-compatible format (used by cytokine dotplots
   # and bar plots instead of the retired screen_one_exposure_lmer_log2()).
   lmer_plot_data <- lmer_results_to_plot_format(
-    lmer_All, lmer_F, lmer_M,
+    lmer_plot_All, lmer_plot_F, lmer_plot_M,
     celltype = celltype_filter,
     hormone  = hormone_filter,
     alpha    = alpha_q
@@ -722,6 +751,7 @@ build_lmer_sig_table <- function(lmer_All, lmer_F, lmer_M,
 
 # ── Convert exposure_lmer_pairwise() output to plot-compatible format ─────────
 # Used internally by run_lmer_chunk() to produce lmer_plot_data.
+# FDR correction is applied per cytokine and, when present, per TIMEPOINT.
 # 
 exposure_lmer_pairwise_by_timepoint <- function(
     data,
@@ -901,6 +931,8 @@ lmer_results_to_plot_format <- function(lmer_All, lmer_F, lmer_M,
         EXPOSURE  = stringr::str_replace(contrast, paste0(" - ", stringr::fixed(PBS_LEVEL), "$"), ""),
         CYTOKINE  = response
       ) %>%
+      dplyr::select(SEX, CELLTYPE, HORMONE, dplyr::any_of("TIMEPOINT"),
+                    EXPOSURE, CYTOKINE,
       dplyr::select(SEX, CELLTYPE, HORMONE, TIMEPOINT, EXPOSURE, CYTOKINE,
                     estimate, SE, p.value)
   }
@@ -911,6 +943,10 @@ lmer_results_to_plot_format <- function(lmer_All, lmer_F, lmer_M,
     parse_rows(lmer_M,   "M")
   )
   
+  group_vars <- c("CYTOKINE", intersect("TIMEPOINT", names(combined)))
+
+  combined %>%
+    dplyr::group_by(dplyr::across(dplyr::all_of(group_vars))) %>%
   combined %>%
     dplyr::group_by(SEX, CELLTYPE, HORMONE, TIMEPOINT, CYTOKINE) %>%
     dplyr::mutate(q = p.adjust(p.value, method = "fdr")) %>%
