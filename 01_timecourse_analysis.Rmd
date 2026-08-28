@@ -85,11 +85,10 @@ cat("  MSD rows:", nrow(WSTC_highdose),
 ## Build WSTC_full
 
 ```{r build-wstc-full}
-# average_nonzero_by_sample() and build_sala_full() live in functions_data.R
-# apply_factor_spec() enforces CELLTYPE / HORMONE / SEX factor levels from config.R
-
 WSTC_avg  <- average_nonzero_by_sample(WSTC_highdose)
 WSTC_full <- build_sala_full(WSTC_avg, metadata_WSTC1_1152)
+
+assert_analysis_metadata(WSTC_full)
 
 names(metadata_WSTC1_1152)
 
@@ -107,6 +106,21 @@ cat("  EXPOSURE:", paste(levels(WSTC_full$EXPOSURE), collapse = " | "), "\n")
 cat("\nObserved EXPOSURE values:\n")
 print(sort(unique(as.character(WSTC_full$EXPOSURE))))
 cat("Missing EXPOSURE:", sum(is.na(WSTC_full$EXPOSURE)), "\n")
+```
+
+```{r define-plot-exposures}
+plot_exposures <- intersect(
+  ALL_HIGH_DOSE_EXPOSURES,
+  unique(as.character(WSTC_full$EXPOSURE))
+)
+
+cat("Configured exposures:", paste(ALL_HIGH_DOSE_EXPOSURES, collapse = " | "), "\n")
+cat("Present in WSTC_full:", paste(sort(unique(as.character(WSTC_full$EXPOSURE))), collapse = " | "), "\n")
+cat("Using plot_exposures:", paste(plot_exposures, collapse = " | "), "\n")
+
+if (length(plot_exposures) == 0) {
+  stop("No configured high-dose exposures found in WSTC_full.")
+}
 ```
 
 ------------------------------------------------------------------------
@@ -144,7 +158,7 @@ print(shapiro.test(LDH_Cytotox$TEERCHANGE))
 
 ```{r paired-audit-and-enforce}
 target_exposures <- intersect(
-  ALL_HIGH_DOSE_EXPOSURES,
+  plot_exposures,
   unique(as.character(WSTC_full$EXPOSURE))
 )
 
@@ -189,6 +203,26 @@ pair_check <- WSTC_paired %>%
 print(pair_check, n = 200)
 
 cat("✓ Paired dataset rows:", nrow(WSTC_paired), "\n")
+
+pair_check_by_exposure <- purrr::map_dfr(plot_exposures, function(exp) {
+  d <- enforce_pairs_for_exposure(WSTC_full, exp)
+
+  chk <- d %>%
+    dplyr::distinct(PATIENTCODE, CELLTYPE, HORMONE, SEX, TIMEPOINT, EXPOSURE) %>%
+    dplyr::count(PATIENTCODE, CELLTYPE, HORMONE, SEX, TIMEPOINT, name = "n_levels") %>%
+    dplyr::mutate(target_exposure = exp)
+
+  bad <- chk %>% dplyr::filter(n_levels != 2)
+
+  dplyr::tibble(
+    target_exposure = exp,
+    n_rows = nrow(d),
+    n_strata = nrow(chk),
+    n_bad_strata = nrow(bad)
+  )
+})
+
+print(pair_check_by_exposure)
 ```
 
 # Cytokine & Imputation Setup
@@ -312,13 +346,7 @@ WSTC_TMR_sig <- WSTC_paired %>%
 save_table(WSTC_TMR_sig, "WSTC_no_ESTRADIOL_with_sig.csv")
 cat("✓ WSTC_no_ESTRADIOL_with_sig.csv saved (includes sig/q columns)\n")
 ```
-cat("\nObserved EXPOSURE levels:\n")
-print(sort(unique(as.character(WSTC_full$EXPOSURE))))
 
-cat("\nConfigured ALL_HIGH_DOSE_EXPOSURES:\n")
-print(ALL_HIGH_DOSE_EXPOSURES)
-
-cat("\nIntersection:\n")
 ## Timepoint Comparisons
 ```{r timepoint-comparisons}
 
@@ -337,7 +365,7 @@ WSTC_full_long <- WSTC_paired %>%
 
 # Keep only exposures present in this dataset
 tp_exposures <- intersect(
-  ALL_HIGH_DOSE_EXPOSURES,
+  plot_exposures,
   unique(as.character(WSTC_full_long$EXPOSURE))
 )
 
@@ -393,7 +421,7 @@ for (cyt in top_cyt) {
 p_hm <- plot_timepoint_delta_heatmap(
   WSTC_full_long %>%
     dplyr::filter(EXPOSURE %in% intersect(
-      ALL_HIGH_DOSE_EXPOSURES,
+      plot_exposures,
       unique(as.character(EXPOSURE))
     ))
 )
@@ -409,7 +437,7 @@ if (!is.null(p_hm)) {
 
 # Cytokine Dotplots
 
-Loops over all 4 high-dose exposures in `ALL_HIGH_DOSE_EXPOSURES`.\
+Loops over all 4 high-dose exposures in `plot_exposures`.\
 For each exposure the pipeline:
 
 1.  Filters `lmer_results_all` for the current exposure to get significance calls\
@@ -423,9 +451,7 @@ For each exposure the pipeline:
 cat("Observed EXPOSURE:\n")
 print(sort(unique(as.character(WSTC_full$EXPOSURE))))
 cat("Configured high-dose:\n")
-print(ALL_HIGH_DOSE_EXPOSURES)
-
-ALL_HIGH_DOSE_EXPOSURES <- c("Pine_25", "Peat_25")
+print(plot_exposures)
 
 # ── Shared color constants (match config.R) ───────────────────────────────────
 UP_COLOR       <- "#D7191C"
@@ -434,10 +460,10 @@ ESTRADIOL_FILL <- "#E8F5E9"
 
 # ── Per-exposure loop ─────────────────────────────────────────────────────────
 available_high_dose_exposures <- intersect(
-  ALL_HIGH_DOSE_EXPOSURES,
+  plot_exposures,
   unique(as.character(WSTC_full$EXPOSURE))
 )
-missing_high_dose_exposures <- setdiff(ALL_HIGH_DOSE_EXPOSURES, available_high_dose_exposures)
+missing_high_dose_exposures <- setdiff(plot_exposures, available_high_dose_exposures)
 
 cat("Configured high-dose exposures found after normalization:",
     paste(available_high_dose_exposures, collapse = " | "), "\n")
@@ -814,7 +840,7 @@ stopifnot("SMOKER" %in% names(WSTC_full))
 vp_results_list <- list()
 vp_summary_list <- list()
 
-for (exp in ALL_HIGH_DOSE_EXPOSURES) {
+for (exp in plot_exposures) {
 
   cat("\n── Variance partition:", exp, "──\n")
 
@@ -907,7 +933,7 @@ if (length(vp_results_list) > 0) {
   p_smoker_dot <- vp_summary_all %>%
     dplyr::select(Cytokine, Exposure, SMOKER) %>%
     dplyr::mutate(
-      Exposure = factor(Exposure, levels = ALL_HIGH_DOSE_EXPOSURES),
+      Exposure = factor(Exposure, levels = plot_exposures),
       Cytokine = reorder(Cytokine, SMOKER, FUN = mean)
     ) %>%
     ggplot2::ggplot(ggplot2::aes(x = Exposure, y = Cytokine,
