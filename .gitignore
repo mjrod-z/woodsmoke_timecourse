@@ -1,0 +1,11 @@
+# RStudio project files
+*.Rproj
+.Rproj.user/
+
+# R history and workspace
+.Rhistory
+.RData
+
+# Temporary files
+*~
+*.tmp
