@@ -284,6 +284,50 @@ make_cytokine_barplot <- function(summary_raw, d_raw, cyt,
   
   p
 }
+# ── Timepoint Visualizations  ───────────────────────────────
+plot_timepoint_spaghetti <- function(df_long, cytokine_name, y_log2 = TRUE) {
+  d <- df_long %>%
+    dplyr::filter(CYTOKINE == cytokine_name, SEX %in% c("F", "M")) %>%
+    dplyr::mutate(
+      TIMEPOINT = factor(as.character(TIMEPOINT), levels = c("4", "144")),
+      y = if (y_log2) log2(as.numeric(Value) + PSEUDOCOUNT) else as.numeric(Value)
+    ) %>%
+    dplyr::filter(!is.na(y), !is.na(TIMEPOINT), !is.na(CELLTYPE), !is.na(HORMONE), !is.na(EXPOSURE))
+  
+  if (nrow(d) == 0) return(NULL)
+  
+  ggplot2::ggplot(d, ggplot2::aes(TIMEPOINT, y, group = PATIENTCODE, color = SEX)) +
+    ggplot2::geom_line(alpha = 0.35) +
+    ggplot2::geom_point(size = 1.5) +
+    ggplot2::facet_grid(CELLTYPE + HORMONE ~ EXPOSURE, scales = "free_y", drop = TRUE) +
+    ggplot2::theme_bw() +
+    ggplot2::labs(title = paste0(cytokine_name, " — 4 vs 144"), x = "Timepoint", y = "log2(Value+pseudocount)")
+}
+plot_timepoint_delta_heatmap <- function(df_long) {
+  dsum <- df_long %>%
+    dplyr::mutate(
+      TIMEPOINT = factor(as.character(TIMEPOINT), levels = c("4","144")),
+      val = log2(as.numeric(Value) + PSEUDOCOUNT)
+    ) %>%
+    dplyr::group_by(CYTOKINE, CELLTYPE, HORMONE, SEX, EXPOSURE, TIMEPOINT) %>%
+    dplyr::summarise(mu = mean(val, na.rm = TRUE), .groups = "drop") %>%
+    tidyr::pivot_wider(names_from = TIMEPOINT, values_from = mu) %>%
+    dplyr::mutate(delta_144_vs_4 = `144` - `4`)
+  
+  ggplot2::ggplot(
+    dsum,
+    ggplot2::aes(x = EXPOSURE, y = CYTOKINE, fill = delta_144_vs_4)
+  ) +
+    ggplot2::geom_tile(color = "white", linewidth = 0.2) +
+    ggplot2::facet_grid(CELLTYPE + HORMONE ~ SEX, scales = "free_y", space = "free_y") +
+    ggplot2::scale_fill_gradient2(low = "#2C7BB6", mid = "white", high = "#D7191C", midpoint = 0) +
+    ggplot2::theme_minimal(base_size = 11) +
+    ggplot2::labs(
+      title = "Timepoint effect heatmap (144 - 4, log2 scale)",
+      x = "Exposure", y = "Cytokine", fill = "Δ log2"
+    )
+}
+
 # ── Per-cytokine histogram ────────────────────────────────────────────────────
 
 make_cytokine_histogram <- function(d_raw, cyt, target_exposure) {
