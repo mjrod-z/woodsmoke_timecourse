@@ -22,7 +22,7 @@ knit: (function(input, ...) {
   Factors maintained throughout:
     CELLTYPE : SAE | LAE   (CELLTYPE_LEVELS)
     HORMONE  : NONE | Estradiol  (HORMONE_LEVELS)
-    TIMEPOINT: _4 | _144   (TIMEPOINT_LEVELS)
+    TIMEPOINT: 4 | 144   (TIMEPOINT_LEVELS)
     SEX      : M | F       (SEX_LEVELS)
     EXPOSURE : PBS Control | Pine 25 | Peat 25 | Eucalyptus 25 | Red Oak 25
   ============================================================ -->
@@ -70,8 +70,8 @@ cat("  Project root:", here::here(), "\n")
 ## Load Raw Data
 
 ```{r load-data}
-WSTC_highdose       <- readr::read_csv(here::here(PATH_DATA_RAW, "SALA_MSD.csv"))
-metadata_WSTC1_1152 <- readr::read_csv(here::here(PATH_DATA_RAW, "2025_SALA1_1152_metadata.csv"))
+WSTC_highdose       <- readr::read_csv(here::here(PATH_DATA_RAW, "4hvs144h.csv"))
+metadata_WSTC1_1152 <- readr::read_csv(here::here(PATH_DATA_RAW, "timecourse_metadata.csv"))
 
 # LDH / TEER — uncomment when data is available
 # LDH_TEER      <- readr::read_csv(here::here(PATH_DATA_RAW, "2023_LDHTEER_MJR1-191_4H.csv"))
@@ -89,8 +89,12 @@ cat("  MSD rows:", nrow(WSTC_highdose),
 # apply_factor_spec() enforces CELLTYPE / HORMONE / SEX factor levels from config.R
 
 WSTC_avg  <- average_nonzero_by_sample(WSTC_highdose)
-WSTC_full <- build_sala_full(WSTC_avg, metadata_WSTC1_1152) %>%
-  dplyr::filter(EXPOSURE != "Untreated_Control")
+WSTC_full <- build_sala_full(WSTC_avg, metadata_WSTC1_1152)
+
+names(metadata_WSTC1_1152)
+
+# temporary: do NOT filter until exposure mapping is confirmed
+# WSTC_full <- WSTC_full %>% dplyr::filter(EXPOSURE != "Untreated_Control")
 
 cat("✓ WSTC_full built\n")
 cat("  Rows    :", nrow(WSTC_full), "\n")
@@ -99,6 +103,10 @@ cat("  HORMONE :", paste(levels(WSTC_full$HORMONE),  collapse = " | "), "\n")
 cat("  TIMEPOINT:", paste(levels(WSTC_full$TIMEPOINT), collapse = " | "), "\n")
 cat("  SEX     :", paste(levels(WSTC_full$SEX),      collapse = " | "), "\n")
 cat("  EXPOSURE:", paste(levels(WSTC_full$EXPOSURE), collapse = " | "), "\n")
+
+cat("\nObserved EXPOSURE values:\n")
+print(sort(unique(as.character(WSTC_full$EXPOSURE))))
+cat("Missing EXPOSURE:", sum(is.na(WSTC_full$EXPOSURE)), "\n")
 ```
 
 ------------------------------------------------------------------------
@@ -133,6 +141,56 @@ print(shapiro.test(LDH_Cytotox$TEERCHANGE))
 
 ------------------------------------------------------------------------
 
+
+```{r paired-audit-and-enforce}
+target_exposures <- intersect(
+  ALL_HIGH_DOSE_EXPOSURES,
+  unique(as.character(WSTC_full$EXPOSURE))
+)
+
+# 1) Donor-level presence table
+pair_audit <- WSTC_full %>%
+  dplyr::filter(EXPOSURE %in% c(PBS_LEVEL, target_exposures)) %>%
+  dplyr::distinct(PATIENTCODE, CELLTYPE, HORMONE, SEX, TIMEPOINT, EXPOSURE) %>%
+  dplyr::mutate(present = 1L) %>%
+  tidyr::pivot_wider(
+    names_from = EXPOSURE, values_from = present, values_fill = 0
+  )
+
+print(pair_audit, n = 200)
+
+# 2) For each exposure, keep only donor-strata with BOTH PBS and that exposure
+enforce_pairs_for_exposure <- function(df, exposure, pbs = PBS_LEVEL) {
+  key <- c("PATIENTCODE","CELLTYPE","HORMONE","SEX","TIMEPOINT")
+  keep_ids <- df %>%
+    dplyr::filter(EXPOSURE %in% c(pbs, exposure)) %>%
+    dplyr::distinct(dplyr::across(dplyr::all_of(c(key, "EXPOSURE")))) %>%
+    dplyr::mutate(flag = 1L) %>%
+    tidyr::pivot_wider(names_from = EXPOSURE, values_from = flag, values_fill = 0) %>%
+    dplyr::filter(.data[[pbs]] == 1L, .data[[exposure]] == 1L) %>%
+    dplyr::select(dplyr::all_of(key))
+
+  df %>%
+    dplyr::filter(EXPOSURE %in% c(pbs, exposure)) %>%
+    dplyr::inner_join(keep_ids, by = key)
+}
+
+# 3) Build paired-only dataset across exposures
+WSTC_paired <- dplyr::bind_rows(lapply(target_exposures, function(exp) {
+  enforce_pairs_for_exposure(WSTC_full, exp)
+})) %>%
+  dplyr::distinct()
+
+# 4) Verify strict 1:1 at donor-stratum level
+pair_check <- WSTC_paired %>%
+  dplyr::distinct(PATIENTCODE, CELLTYPE, HORMONE, SEX, TIMEPOINT, EXPOSURE) %>%
+  dplyr::count(CELLTYPE, HORMONE, SEX, TIMEPOINT, EXPOSURE, name = "n")
+
+print(pair_check, n = 200)
+
+cat("✓ Paired dataset rows:", nrow(WSTC_paired), "\n")
+```
+
 # Cytokine & Imputation Setup
 
 Imputes values below LLOD (LOD/√2) using a single global pass over `WSTC_full`.
@@ -160,13 +218,16 @@ cat("✓ Global imputation complete\n")
 cat("  Valid cytokines:", length(imp$valid_cytokines), "\n")
 cat("  Skipped (>", ZERO_CUTOFF * 100, "% zeros):",
     nrow(imp$skipped_cytokines), "\n\n")
+
+cat("valid global cytokines length:", length(imp$valid_cytokines), "\n")
+cat("First few global cytokines:", paste(head(imp$valid_cytokines), collapse = ", "), "\n")
 ```
 
 --------
 
 # LMER Significance Tables
 
-Runs the 14-step lmer → significance-table pipeline for each of the four CELLTYPE × HORMONE strata. `run_lmer_chunk()` lives in `functions_analysis.R` and calls `exposure_lmer_pairwise()`, `interaction_lmer_pairwise()`, `summarize_to_wide()`, and `build_lmer_sig_table()`. LMER formulas include TIMEPOINT as a fixed effect when both `_4` and `_144` are present. Each call also returns `lmer_plot_data` — a tidy tibble (SEX / CELLTYPE / HORMONE / EXPOSURE / CYTOKINE / q / sig) used by the dotplot section below as the single source of statistical truth.
+Runs the 14-step lmer → significance-table pipeline for each of the four CELLTYPE × HORMONE strata. `run_lmer_chunk()` lives in `functions_analysis.R` and calls `exposure_lmer_pairwise()`, `interaction_lmer_pairwise()`, `summarize_to_wide()`, and `build_lmer_sig_table()`. LMER formulas include TIMEPOINT as a fixed effect when both `4` and `144` are present. Each call also returns `lmer_plot_data` — a tidy tibble (SEX / CELLTYPE / HORMONE / EXPOSURE / CYTOKINE / q / sig) used by the dotplot section below as the single source of statistical truth.
 
 ## LAE — No Hormone
 
@@ -198,6 +259,16 @@ SAE_NONE_lmer_interaction <- SAE_NONE_res$lmer_interaction
 SAE_E2_res  <- run_lmer_chunk("SAE_E2", "SAE", "Estradiol", sala_full = WSTC_full)
 SAE_E2_sig  <- SAE_E2_res$sig_table
 SAE_E2_lmer_interaction <- SAE_E2_res$lmer_interaction
+
+# prove stat contrasts are within-timepoint PBS
+diag_tp <- lmer_results_all %>%
+  dplyr::count(SEX, CELLTYPE, HORMONE, TIMEPOINT, EXPOSURE, name = "n_tests")
+
+print(diag_tp)
+
+# should show separate rows for TIMEPOINT 4 and 144 per exposure
+stopifnot(all(c("4","144") %in% unique(as.character(lmer_results_all$TIMEPOINT))))
+
 ```
 
 ## Combine LMER plot data
@@ -240,7 +311,98 @@ WSTC_TMR_sig <- WSTC_full %>%
 save_table(WSTC_TMR_sig, "WSTC_no_ESTRADIOL_with_sig.csv")
 cat("✓ WSTC_no_ESTRADIOL_with_sig.csv saved (includes sig/q columns)\n")
 ```
+cat("\nObserved EXPOSURE levels:\n")
+print(sort(unique(as.character(WSTC_full$EXPOSURE))))
 
+cat("\nConfigured ALL_HIGH_DOSE_EXPOSURES:\n")
+print(ALL_HIGH_DOSE_EXPOSURES)
+
+cat("\nIntersection:\n")
+## Timepoint Comparisons
+```{r timepoint-comparisons}
+
+# Build a long table for timepoint modeling (from WSTC_full wide cytokine matrix)
+WSTC_full_long <- WSTC_full %>%
+  dplyr::select(
+    SAMPLEID, PATIENTCODE, CELLTYPE, HORMONE, TIMEPOINT, SEX, EXPOSURE,
+    dplyr::any_of(cytokine_cols_all)
+  ) %>%
+  tidyr::pivot_longer(
+    cols = dplyr::any_of(cytokine_cols_all),
+    names_to = "CYTOKINE",
+    values_to = "Value"
+  )
+
+# Keep only exposures present in this dataset
+tp_exposures <- intersect(
+  ALL_HIGH_DOSE_EXPOSURES,
+  unique(as.character(WSTC_full_long$EXPOSURE))
+)
+
+tp_stats <- WSTC_full_long %>%
+  dplyr::filter(EXPOSURE %in% tp_exposures) %>%
+  dplyr::group_by(CYTOKINE) %>%
+  dplyr::group_modify(~ timepoint_lmer_within_exposure_sex(
+    data = .x,
+    response = "Value",
+    min_donors = 4,
+    time_levels = c("4", "144")
+  )) %>%
+  dplyr::ungroup()
+
+save_table(tp_stats, "WSTC_timepoint_within_exposure_sex_lmer.csv")
+cat("✓ Saved: WSTC_timepoint_within_exposure_sex_lmer.csv\n")
+print(dplyr::arrange(tp_stats, p_adj_BH) %>% dplyr::slice_head(n = 20))
+
+```
+
+```{r timepoint-visualizations, fig.width=14, fig.height=8}
+# choose top cytokines by BH-adjusted p-value from tp_stats
+top_cyt <- tp_stats %>%
+  dplyr::filter(!is.na(p_adj_BH), !is.na(CYTOKINE)) %>%
+  dplyr::arrange(p_adj_BH) %>%
+  dplyr::pull(CYTOKINE) %>%
+  unique() %>%
+  head(6)
+
+cat("Top cytokines:", paste(top_cyt, collapse = ", "), "\n")
+cat("WSTC_full_long rows:", nrow(WSTC_full_long), "\n")
+
+for (cyt in top_cyt) {
+  cat("Plotting:", cyt, "\n")
+  p_sp <- plot_timepoint_spaghetti(
+    df_long = WSTC_full_long,
+    cytokine_name = cyt,
+    y_log2 = TRUE
+  )
+
+  if (is.null(p_sp)) {
+    cat("Skipping (no data):", cyt, "\n")
+    next
+  }
+
+  print(p_sp)
+  save_plot(
+    paste0("timepoint_spaghetti_", safe_name(cyt), ".png"),
+    p_sp, width = 14, height = 8, dpi = 300, bg = "white"
+  )
+}
+
+p_hm <- plot_timepoint_delta_heatmap(
+  WSTC_full_long %>%
+    dplyr::filter(EXPOSURE %in% intersect(
+      ALL_HIGH_DOSE_EXPOSURES,
+      unique(as.character(EXPOSURE))
+    ))
+)
+
+if (!is.null(p_hm)) {
+  print(p_hm)
+  save_plot("timepoint_delta_heatmap.png", p_hm, width = 12, height = 9, dpi = 300, bg = "white")
+} else {
+  cat("Skipping heatmap (no data).\n")
+}
+```
 --------
 
 # Cytokine Dotplots
@@ -254,6 +416,15 @@ For each exposure the pipeline:
 4.  Saves per-cytokine bar plots and histograms, each faceted by **CELLTYPE × HORMONE**
 
 ```{r cytokine-dotplot, fig.width=14, fig.height=8, results='asis'}
+
+# right before the failing check
+cat("Observed EXPOSURE:\n")
+print(sort(unique(as.character(WSTC_full$EXPOSURE))))
+cat("Configured high-dose:\n")
+print(ALL_HIGH_DOSE_EXPOSURES)
+
+ALL_HIGH_DOSE_EXPOSURES <- c("Pine_25", "Peat_25")
+
 # ── Shared color constants (match config.R) ───────────────────────────────────
 UP_COLOR       <- "#D7191C"
 DOWN_COLOR     <- "#2C7BB6"
@@ -356,41 +527,29 @@ for (target_exposure in available_high_dose_exposures) {
 
   # ── 6) Single-source significance maps (from LMER, not log2FC) ───────────
   sig_map_sex <- dplyr::bind_rows(lmer_exp_F, lmer_exp_M) %>%
-    dplyr::filter(CYTOKINE %in% keep_cytokines) %>%
-    dplyr::transmute(
-      SEX      = factor(as.character(SEX),     levels = SEX_LEVELS),
-      CELLTYPE = as.character(CELLTYPE),
-      HORMONE  = factor(as.character(HORMONE), levels = hormone_levels),
-      CYTOKINE = as.character(CYTOKINE),
-      q        = as.numeric(q)
-    ) %>%
-    dplyr::group_by(SEX, CELLTYPE, HORMONE, CYTOKINE) %>%
-    dplyr::summarise(
-      q   = min(q, na.rm = TRUE),
-      sig = q < ALPHA_Q,
-      .groups = "drop"
-    ) %>%
-    tidyr::expand_grid(
-      TIMEPOINT = factor(TIMEPOINT_LEVELS, levels = TIMEPOINT_LEVELS)
-    )
+  dplyr::filter(CYTOKINE %in% keep_cytokines) %>%
+  dplyr::transmute(
+    SEX       = factor(as.character(SEX), levels = SEX_LEVELS),
+    CELLTYPE  = as.character(CELLTYPE),
+    HORMONE   = factor(as.character(HORMONE), levels = hormone_levels),
+    TIMEPOINT = factor(as.character(TIMEPOINT), levels = TIMEPOINT_LEVELS),
+    CYTOKINE  = as.character(CYTOKINE),
+    q         = as.numeric(q)
+  ) %>%
+  dplyr::group_by(SEX, CELLTYPE, HORMONE, TIMEPOINT, CYTOKINE) %>%
+  dplyr::summarise(q = min(q, na.rm = TRUE), sig = q < ALPHA_Q, .groups = "drop")
 
   sig_map_all <- lmer_exp_All %>%
-    dplyr::filter(CYTOKINE %in% keep_cytokines) %>%
-    dplyr::transmute(
-      CELLTYPE = as.character(CELLTYPE),
-      HORMONE  = factor(as.character(HORMONE), levels = hormone_levels),
-      CYTOKINE = as.character(CYTOKINE),
-      q        = as.numeric(q)
-    ) %>%
-    dplyr::group_by(CELLTYPE, HORMONE, CYTOKINE) %>%
-    dplyr::summarise(
-      q          = min(q, na.rm = TRUE),
-      sig_pooled = q < ALPHA_Q,
-      .groups    = "drop"
-    ) %>%
-    tidyr::expand_grid(
-      TIMEPOINT = factor(TIMEPOINT_LEVELS, levels = TIMEPOINT_LEVELS)
-    )
+  dplyr::filter(CYTOKINE %in% keep_cytokines) %>%
+  dplyr::transmute(
+    CELLTYPE  = as.character(CELLTYPE),
+    HORMONE   = factor(as.character(HORMONE), levels = hormone_levels),
+    TIMEPOINT = factor(as.character(TIMEPOINT), levels = TIMEPOINT_LEVELS),
+    CYTOKINE  = as.character(CYTOKINE),
+    q         = as.numeric(q)
+  ) %>%
+  dplyr::group_by(CELLTYPE, HORMONE, TIMEPOINT, CYTOKINE) %>%
+  dplyr::summarise(q = min(q, na.rm = TRUE), sig_pooled = q < ALPHA_Q, .groups = "drop")
 
  # ── 7) Build plot data frames ─────────────────────────────────────────────
 make_plot_df <- function(df, grp_vars, sig_join, sig_col) {
@@ -1016,8 +1175,8 @@ p_pca_timepoint <- ggplot2::ggplot(
                         geom = "polygon", alpha = 0.10,
                         linewidth = 0.6, show.legend = FALSE) +
   ggplot2::geom_point(shape = 21, size = 2.5, alpha = 0.85, stroke = 0.6) +
-  ggplot2::scale_fill_manual(values = c("_4" = "#4DAF4A", "_144" = "#984EA3"), name = "Timepoint") +
-  ggplot2::scale_color_manual(values = c("_4" = "#4DAF4A", "_144" = "#984EA3"), name = "Timepoint") +
+  ggplot2::scale_fill_manual(values = c("4" = "#4DAF4A", "144" = "#984EA3"), name = "Timepoint") +
+  ggplot2::scale_color_manual(values = c("4" = "#4DAF4A", "144" = "#984EA3"), name = "Timepoint") +
   ggplot2::labs(x = pc_labs["x"], y = pc_labs["y"], title = "PCA \u2014 By Timepoint") +
   base_pca_theme
 
