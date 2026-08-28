@@ -17,6 +17,7 @@ This repository contains modular R code for:
 
 ```text
 .
+├── .gitignore
 ├── 01_timecourse_analysis.Rmd
 ├── README.md
 ├── _load_all.R
@@ -24,6 +25,8 @@ This repository contains modular R code for:
 ├── functions_data.R
 ├── functions_analysis.R
 ├── functions_plots.R
+├── R/
+├── analysis/
 ├── data/
 │   ├── raw/
 │   └── derived/
@@ -31,3 +34,4 @@ This repository contains modular R code for:
     ├── figures/
     ├── tables/
     └── reports/
+```
