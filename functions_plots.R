@@ -343,15 +343,38 @@ plot_timepoint_spaghetti <- function(df_long, cytokine_name, did_stats,
     )
 
   ann <- dplyr::bind_rows(did_ann, ref_ann)
+  ann_up <- ann %>% dplyr::filter(did_color == "#D7191C")
+  ann_down <- ann %>% dplyr::filter(did_color == "#2C7BB6")
+  ann_neutral <- ann %>% dplyr::filter(did_color == "grey35")
   
   ggplot2::ggplot(d, ggplot2::aes(TIMEPOINT, y, group = PATIENTCODE, color = SEX)) +
     ggplot2::geom_line(alpha = 0.35) +
     ggplot2::geom_point(size = 1.5) +
     ggplot2::geom_text(
-      data = ann,
+      data = ann_up,
       ggplot2::aes(x = TIMEPOINT, y = y_annot, label = did_label),
-      colour = ann$did_color,
       inherit.aes = FALSE,
+      colour = "#D7191C",
+      hjust = 1,
+      vjust = 0,
+      size = 3.2,
+      fontface = "bold"
+    ) +
+    ggplot2::geom_text(
+      data = ann_down,
+      ggplot2::aes(x = TIMEPOINT, y = y_annot, label = did_label),
+      inherit.aes = FALSE,
+      colour = "#2C7BB6",
+      hjust = 1,
+      vjust = 0,
+      size = 3.2,
+      fontface = "bold"
+    ) +
+    ggplot2::geom_text(
+      data = ann_neutral,
+      ggplot2::aes(x = TIMEPOINT, y = y_annot, label = did_label),
+      inherit.aes = FALSE,
+      colour = "grey35",
       hjust = 1,
       vjust = 0,
       size = 3.2,
@@ -359,8 +382,7 @@ plot_timepoint_spaghetti <- function(df_long, cytokine_name, did_stats,
     ) +
     ggplot2::facet_grid(CELLTYPE + HORMONE ~ EXPOSURE, scales = "free_y", drop = TRUE) +
     ggplot2::scale_color_manual(
-      values = c("F" = "#C06C84", "M" = "#355C7D", "#D7191C" = "#D7191C",
-                 "#2C7BB6" = "#2C7BB6", "grey35" = "grey35"),
+      values = c("F" = "#C06C84", "M" = "#355C7D"),
       breaks = c("F", "M"),
       name = "Sex"
     ) +
