@@ -356,7 +356,7 @@ The primary timecourse inference is a difference-in-differences (DiD):
 \]
 so conclusions are about change from 4h to 144h **relative to PBS**, not an unmeasured time baseline.
 
-```{r timepoint-comparisons}
+```{r timepoint-long-data}
 
 # Build a long table for timepoint modeling (from WSTC_paired wide cytokine matrix)
 WSTC_full_long <- WSTC_paired %>%
@@ -376,22 +376,6 @@ tp_exposures <- intersect(
   plot_exposures,
   unique(as.character(WSTC_full_long$EXPOSURE))
 )
-
-tp_stats <- WSTC_full_long %>%
-  dplyr::filter(EXPOSURE %in% tp_exposures) %>%
-  dplyr::group_by(CYTOKINE) %>%
-  dplyr::group_modify(~ timepoint_lmer_within_exposure_sex(
-    data = .x,
-    response = "Value",
-    min_donors = 4,
-    time_levels = c("4", "144")
-  )) %>%
-  dplyr::ungroup()
-
-save_table(tp_stats, "WSTC_timepoint_within_exposure_sex_lmer.csv")
-cat("✓ Saved: WSTC_timepoint_within_exposure_sex_lmer.csv\n")
-print(dplyr::arrange(tp_stats, p_adj_BH) %>% dplyr::slice_head(n = 20))
-
 ```
 
 ```{r timepoint-did-vs-pbs}
@@ -469,23 +453,24 @@ if (nrow(did_sig) > 0) {
 ```
 
 ```{r timepoint-visualizations, fig.width=14, fig.height=8}
-# choose top cytokines by BH-adjusted p-value from tp_stats
-top_cyt <- tp_stats %>%
-  dplyr::filter(!is.na(p_adj_BH), !is.na(CYTOKINE)) %>%
-  dplyr::arrange(p_adj_BH) %>%
-  dplyr::pull(CYTOKINE) %>%
+# choose top cytokines by DiD q-value
+top_cyt <- did_stats %>%
+  dplyr::filter(SEX == "All", !is.na(q.value), !is.na(cytokine)) %>%
+  dplyr::arrange(q.value, dplyr::desc(abs(estimate))) %>%
+  dplyr::pull(cytokine) %>%
   unique() %>%
   head(6)
 
-cat("Top cytokines:", paste(top_cyt, collapse = ", "), "\n")
+cat("Top DiD cytokines:", paste(top_cyt, collapse = ", "), "\n")
 cat("WSTC_full_long rows:", nrow(WSTC_full_long), "\n")
 
 for (cyt in top_cyt) {
   cat("Plotting:", cyt, "\n")
   p_sp <- plot_timepoint_spaghetti(
-    df_long = WSTC_full_long,
+    df_long = WSTC_full_long %>%
+      dplyr::filter(EXPOSURE %in% c(PBS_LEVEL, tp_exposures)),
     cytokine_name = cyt,
-    tp_stats = tp_stats,
+    did_stats = did_stats,
     y_log2 = TRUE
   )
 
@@ -502,11 +487,7 @@ for (cyt in top_cyt) {
 }
 
 p_hm <- plot_timepoint_delta_heatmap(
-  WSTC_full_long %>%
-    dplyr::filter(EXPOSURE %in% intersect(
-      plot_exposures,
-      unique(as.character(EXPOSURE))
-    ))
+  did_stats = did_stats
 )
 
 if (!is.null(p_hm)) {
