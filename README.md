@@ -25,7 +25,7 @@ Calls use BH-FDR (`q < 0.05`) plus direction:
 - **Increase over time vs PBS**: `q < 0.05` and estimate > 0
 - **Decrease over time vs PBS**: `q < 0.05` and estimate < 0
 - **No significant change over time vs PBS**: otherwise
-Timepoint visualizations use this DiD table for cytokine ranking, annotations, and heatmap values so plots do not present within-exposure 4h-vs-144h statistics as the main inference.
+Timepoint visualizations use this DiD table for cytokine ranking, annotations, and heatmap values, so plots do not present within-exposure 4h-vs-144h statistics as the main inference.
 
 ## Project structure
 

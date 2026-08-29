@@ -349,7 +349,8 @@ plot_timepoint_spaghetti <- function(df_long, cytokine_name, did_stats,
     ggplot2::geom_point(size = 1.5) +
     ggplot2::geom_text(
       data = ann,
-      ggplot2::aes(x = TIMEPOINT, y = y_annot, label = did_label, color = did_color),
+      ggplot2::aes(x = TIMEPOINT, y = y_annot, label = did_label),
+      colour = ann$did_color,
       inherit.aes = FALSE,
       hjust = 1,
       vjust = 0,
@@ -398,7 +399,10 @@ plot_timepoint_delta_heatmap <- function(did_stats, alpha_q = ALPHA_Q) {
     ggplot2::theme_minimal(base_size = 11) +
     ggplot2::labs(
       title = "DiD heatmap relative to PBS",
-      subtitle = "Fill shows [(Exposure - PBS)144h] - [(Exposure - PBS)4h]; stars mark q < 0.05.",
+      subtitle = paste0(
+        "Fill shows [(Exposure - PBS)144h] - [(Exposure - PBS)4h]; stars mark q < ",
+        alpha_q, "."
+      ),
       x = "Exposure", y = "Cytokine", fill = "DiD log2"
     )
 }
