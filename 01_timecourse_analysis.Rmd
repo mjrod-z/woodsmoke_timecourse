@@ -485,6 +485,7 @@ for (cyt in top_cyt) {
   p_sp <- plot_timepoint_spaghetti(
     df_long = WSTC_full_long,
     cytokine_name = cyt,
+    tp_stats = tp_stats,
     y_log2 = TRUE
   )
 
