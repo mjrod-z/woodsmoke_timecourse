@@ -353,7 +353,7 @@ timepoint_lmer_within_exposure_sex <- function(
          paste(missing_cols, collapse = ", "))
   }
 
-  df <- data %>%
+  df_pair <- data %>%
     dplyr::filter(
       !is.na(.data[[response]]),
       !is.na(TIMEPOINT),
@@ -374,7 +374,7 @@ timepoint_lmer_within_exposure_sex <- function(
     dplyr::filter(TIMEPOINT %in% time_levels)
 
   # Split by strata: CELLTYPE × HORMONE × EXPOSURE × SEX
-  strata <- df %>%
+  strata <- df_pair %>%
     dplyr::group_by(CELLTYPE, HORMONE, EXPOSURE, SEX) %>%
     dplyr::group_split(.keep = TRUE)
 
@@ -505,7 +505,7 @@ did_one_exposure_timecourse_lmer <- function(
     return(out)
   }
 
-  df <- data %>%
+  df_pair <- data %>%
     dplyr::filter(
       !is.na(.data[[response]]),
       !is.na(TIMEPOINT),
@@ -520,14 +520,14 @@ did_one_exposure_timecourse_lmer <- function(
     ) %>%
     dplyr::filter(!is.na(TIMEPOINT), !is.na(EXPOSURE))
 
-  ex_levels <- sort(unique(as.character(df$EXPOSURE)))
+  ex_levels <- sort(unique(as.character(df_pair$EXPOSURE)))
   if (!all(c(ctrl_level, target_exposure) %in% ex_levels)) {
     out$note <- "control/treated exposure pair not both present"
     return(out)
   }
 
   # Keep only donors with BOTH exposures at BOTH timepoints.
-  donor_grid <- df %>%
+  donor_grid <- df_pair %>%
     dplyr::distinct(PATIENTCODE, TIMEPOINT, EXPOSURE) %>%
     dplyr::group_by(PATIENTCODE, TIMEPOINT) %>%
     dplyr::summarise(n_exp = dplyr::n_distinct(EXPOSURE), .groups = "drop")
@@ -539,7 +539,7 @@ did_one_exposure_timecourse_lmer <- function(
     dplyr::filter(n_tp == length(time_levels)) %>%
     dplyr::pull(PATIENTCODE)
 
-  df_bal <- df %>%
+  df_bal <- df_pair %>%
     dplyr::filter(PATIENTCODE %in% keep_donors) %>%
     dplyr::mutate(log2_value = log2(as.numeric(.data[[response]]) + pseudocount)) %>%
     dplyr::filter(is.finite(log2_value))
@@ -583,17 +583,17 @@ did_one_exposure_timecourse_lmer <- function(
     return(out)
   }
 
-  coef <- rep(0, nrow(emm_df))
-  coef[row_key == paste(time_levels[1], ctrl_level, sep = "||")] <- 1
-  coef[row_key == paste(time_levels[1], target_exposure, sep = "||")] <- -1
-  coef[row_key == paste(time_levels[2], ctrl_level, sep = "||")] <- -1
-  coef[row_key == paste(time_levels[2], target_exposure, sep = "||")] <- 1
+  did_coef <- rep(0, nrow(emm_df))
+  did_coef[row_key == paste(time_levels[1], ctrl_level, sep = "||")] <- 1
+  did_coef[row_key == paste(time_levels[1], target_exposure, sep = "||")] <- -1
+  did_coef[row_key == paste(time_levels[2], ctrl_level, sep = "||")] <- -1
+  did_coef[row_key == paste(time_levels[2], target_exposure, sep = "||")] <- 1
 
   did <- tryCatch(
     emmeans::contrast(
       emm_grid,
       method = stats::setNames(
-        list(coef),
+        list(did_coef),
         paste0("DiD_", time_levels[2], "_vs_", time_levels[1], "_vs_", ctrl_level)
       ),
       adjust = "none"
@@ -699,7 +699,7 @@ build_timecourse_did_table <- function(
           min_donors = min_donors,
           pseudocount = pseudocount
         )
-        dplyr::bind_cols(.y, did)
+        did
       }) %>%
       dplyr::ungroup()
   })
