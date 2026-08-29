@@ -348,6 +348,14 @@ cat("✓ WSTC_no_ESTRADIOL_with_sig.csv saved (includes sig/q columns)\n")
 ```
 
 ## Timepoint Comparisons
+
+Inference note: PBS is the exposure-control baseline **within each timepoint** (4h and 144h).
+The primary timecourse inference is a difference-in-differences (DiD):
+\[
+[(\text{Exposure} - \text{PBS})_{144h}] - [(\text{Exposure} - \text{PBS})_{4h}]
+\]
+so conclusions are about change from 4h to 144h **relative to PBS**, not an unmeasured time baseline.
+
 ```{r timepoint-comparisons}
 
 # Build a long table for timepoint modeling (from WSTC_paired wide cytokine matrix)
@@ -384,6 +392,80 @@ save_table(tp_stats, "WSTC_timepoint_within_exposure_sex_lmer.csv")
 cat("✓ Saved: WSTC_timepoint_within_exposure_sex_lmer.csv\n")
 print(dplyr::arrange(tp_stats, p_adj_BH) %>% dplyr::slice_head(n = 20))
 
+```
+
+```{r timepoint-did-vs-pbs}
+# Minimal input validation for DiD workflow
+tp_levels_observed <- sort(unique(as.character(WSTC_full_long$TIMEPOINT)))
+cat("Observed TIMEPOINT levels:", paste(tp_levels_observed, collapse = ", "), "\n")
+stopifnot(all(c("4", "144") %in% tp_levels_observed))
+
+did_stats <- build_timecourse_did_table(
+  data = WSTC_full_long %>%
+    dplyr::filter(EXPOSURE %in% c(PBS_LEVEL, tp_exposures)),
+  response = "Value",
+  ctrl_level = PBS_LEVEL,
+  time_levels = c("4", "144"),
+  min_donors = 4,
+  pseudocount = PSEUDOCOUNT,
+  alpha_q = ALPHA_Q,
+  include_all_sex = TRUE
+)
+
+save_table(did_stats, "WSTC_timecourse_did_vs_pbs_lmer.csv")
+cat("✓ Saved: WSTC_timecourse_did_vs_pbs_lmer.csv\n")
+
+# Minimal output validation
+if (nrow(did_stats) > 0) {
+  tested_rows <- did_stats %>% dplyr::filter(!is.na(p.value))
+  if (nrow(tested_rows) > 0) {
+    stopifnot(all(!is.na(tested_rows$q.value)))
+    stopifnot(all(is.finite(tested_rows$q.value)))
+  }
+}
+
+print(
+  did_stats %>%
+    dplyr::arrange(q.value, dplyr::desc(abs(estimate))) %>%
+    dplyr::select(
+      cytokine, CELLTYPE, HORMONE, SEX, exposure, contrast,
+      estimate, SE, conf.low, conf.high, p.value, q.value, direction, call
+    ) %>%
+    dplyr::slice_head(n = 30)
+)
+```
+
+```{r timepoint-did-summary}
+did_tested <- did_stats %>%
+  dplyr::filter(!is.na(p.value), !is.na(q.value))
+
+did_call_counts <- did_tested %>%
+  dplyr::count(call, name = "n_tests") %>%
+  dplyr::arrange(dplyr::desc(n_tests))
+
+cat("DiD tested rows:", nrow(did_tested), "\n")
+print(did_call_counts)
+
+did_sig <- did_tested %>%
+  dplyr::filter(q.value < ALPHA_Q) %>%
+  dplyr::arrange(q.value, dplyr::desc(abs(estimate)))
+
+cat("Significant DiD rows (q <", ALPHA_Q, "):", nrow(did_sig), "\n")
+
+if (nrow(did_sig) > 0) {
+  cat("Top significant DiD results (change from 4h to 144h relative to PBS control):\n")
+  print(
+    did_sig %>%
+      dplyr::select(
+        cytokine, CELLTYPE, HORMONE, SEX, exposure,
+        estimate, conf.low, conf.high, p.value, q.value, direction, call
+      ) %>%
+      dplyr::slice_head(n = 15)
+  )
+} else {
+  cat("No significant DiD rows at q <", ALPHA_Q,
+      ": no significant exposure-associated change from 4h to 144h relative to PBS control.\n")
+}
 ```
 
 ```{r timepoint-visualizations, fig.width=14, fig.height=8}
