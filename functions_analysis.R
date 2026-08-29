@@ -43,35 +43,35 @@ make_log2fc_long <- function(df, cytokine_cols,
     d <- d %>%
       dplyr::mutate(TIMEPOINT = factor(TIMEPOINT, levels = TIMEPOINT_LEVELS))
   }
-  
+
   long <- d %>%
     tidyr::pivot_longer(cols = dplyr::all_of(cytokine_cols),
                         names_to = "CYTOKINE", values_to = "VALUE") %>%
     dplyr::filter(!is.na(VALUE)) %>%
     dplyr::mutate(log2_val = log2(as.numeric(VALUE) + pseudocount))
-  
+
   join_keys <- c("PATIENTCODE", "SEX", "CELLTYPE", "HORMONE", "CYTOKINE")
   if ("TIMEPOINT" %in% names(long)) {
     join_keys <- c(join_keys, "TIMEPOINT")
   }
-  
+
   pbs <- long %>%
     dplyr::filter(EXPOSURE == pbs_level) %>%
     dplyr::select(PATIENTCODE, SEX, CELLTYPE, HORMONE,
                   dplyr::any_of("TIMEPOINT"),
                   CYTOKINE,
                   log2_pbs = log2_val)
-  
+
   out <- long %>%
     dplyr::filter(EXPOSURE != pbs_level) %>%
     dplyr::left_join(pbs, by = join_keys) %>%
     dplyr::mutate(log2FC = log2_val - log2_pbs)
-  
+
   missing_pbs <- out %>%
     dplyr::filter(is.na(log2_pbs)) %>%
     dplyr::distinct(PATIENTCODE, SEX, CELLTYPE, HORMONE,
                     dplyr::any_of("TIMEPOINT"), EXPOSURE, CYTOKINE)
-  
+
   if (nrow(missing_pbs) > 0) {
     warning(
       "make_log2fc_long(): ", nrow(missing_pbs),
@@ -79,7 +79,7 @@ make_log2fc_long <- function(df, cytokine_cols,
       pbs_level, " controls; log2FC is NA for those rows."
     )
   }
-  
+
   out
 }
 
@@ -99,7 +99,7 @@ screen_one_exposure_lmer_log2 <- function(df, cytokine_cols, target_exposure,
                                           emmeans_weights   = c("equal","proportional")) {
   group           <- match.arg(group)
   emmeans_weights <- match.arg(emmeans_weights)
-  
+
   d0 <- df %>%
     dplyr::filter(!EXPOSURE %in% exclude_exposures,
                   EXPOSURE %in% c(ctrl_level, target_exposure)) %>%
@@ -109,17 +109,17 @@ screen_one_exposure_lmer_log2 <- function(df, cytokine_cols, target_exposure,
       CELLTYPE    = factor(CELLTYPE),
       HORMONE     = factor(HORMONE)
     )
-  
+
   if (group %in% c("F","M"))
     d0 <- d0 %>% dplyr::filter(as.character(SEX) == group)
   if ("TIMEPOINT" %in% names(d0)) {
     d0 <- d0 %>%
       dplyr::mutate(TIMEPOINT = factor(TIMEPOINT, levels = TIMEPOINT_LEVELS))
   }
-  
+
   if (ctrl_level %in% levels(d0$EXPOSURE))
     d0$EXPOSURE <- relevel(d0$EXPOSURE, ref = ctrl_level)
-  
+
   # Empty result template, used whenever nothing survives screening
   # (e.g. too few samples in this SEX/CELLTYPE/HORMONE stratum). Returning
   # this instead of an empty bind_rows() output avoids a downstream
@@ -136,7 +136,7 @@ screen_one_exposure_lmer_log2 <- function(df, cytokine_cols, target_exposure,
     q        = numeric(),
     sig      = logical()
   )
-  
+
   get_contrast <- function(fit) {
     emm  <- emmeans::emmeans(fit, ~ EXPOSURE, weights = emmeans_weights)
     levs <- levels(emmeans::summary(emm)$EXPOSURE)
@@ -145,22 +145,22 @@ screen_one_exposure_lmer_log2 <- function(df, cytokine_cols, target_exposure,
     names(contrast_list) <- paste0(target_exposure, " - ", ctrl_level)
     emmeans::contrast(emm, method = contrast_list, adjust = "none")
   }
-  
+
   combos        <- d0 %>% dplyr::distinct(CELLTYPE, HORMONE)
   cytokine_cols <- intersect(cytokine_cols, names(d0))
   out           <- list()
-  
+
   for (i in seq_len(nrow(combos))) {
     ct   <- combos$CELLTYPE[i]
     ho   <- combos$HORMONE[i]
     dsub <- d0 %>% dplyr::filter(CELLTYPE == ct, HORMONE == ho)
     if (!all(c(ctrl_level, target_exposure) %in% unique(dsub$EXPOSURE))) next
-    
+
     for (cyt in cytokine_cols) {
       dat <- dsub %>% dplyr::filter(!is.na(.data[[cyt]]))
       if (nrow(dat) < 3) next
       if (!all(c(ctrl_level, target_exposure) %in% unique(dat$EXPOSURE))) next
-      
+
       dat  <- dat %>% dplyr::mutate(resp = log2(.data[[cyt]] + pseudocount))
       tp_term <- if ("TIMEPOINT" %in% names(dat) &&
                      dplyr::n_distinct(dat$TIMEPOINT[!is.na(dat$TIMEPOINT)]) > 1) {
@@ -169,7 +169,7 @@ screen_one_exposure_lmer_log2 <- function(df, cytokine_cols, target_exposure,
         ""
       }
       form <- as.formula(paste0("resp ~ EXPOSURE", tp_term, " + (1 | PATIENTCODE)"))
-      
+
       fit <- try(lme4::lmer(form, data = dat), silent = TRUE)
       if (inherits(fit, "try-error")) next
       # Check for convergence / singular-fit warnings stored in the fit object
@@ -177,10 +177,10 @@ screen_one_exposure_lmer_log2 <- function(df, cytokine_cols, target_exposure,
         warning("Singular fit for ", cyt, " in CELLTYPE=", ct, " HORMONE=", ho,
                 "; estimates may be unreliable.")
       }
-      
+
       con <- try(get_contrast(fit), silent = TRUE)
       if (inherits(con, "try-error")) next
-      
+
       s <- as.data.frame(summary(con))
       out[[paste(group, ct, ho, cyt, sep = "|")]] <- tibble::tibble(
         SEX      = ifelse(group == "All", "All", group),
@@ -194,16 +194,16 @@ screen_one_exposure_lmer_log2 <- function(df, cytokine_cols, target_exposure,
       )
     }
   }
-  
+
   result <- dplyr::bind_rows(out)
-  
+
   if (nrow(result) == 0) {
     warning("screen_one_exposure_lmer_log2(): no cytokines survived screening for ",
             "group='", group, "', target_exposure='", target_exposure,
             "'. Returning an empty result.")
     return(empty_result)
   }
-  
+
   result %>%
     dplyr::group_by(SEX, CELLTYPE, HORMONE, EXPOSURE) %>%
     dplyr::mutate(q   = p.adjust(p.value, method = "fdr"),
@@ -222,28 +222,28 @@ exposure_lmer_pairwise <- function(data, group = "All", adjust_method = "fdr",
     data <- data %>%
       dplyr::mutate(TIMEPOINT = factor(TIMEPOINT, levels = TIMEPOINT_LEVELS))
   }
-  
+
   stopifnot("EXPOSURE" %in% names(data), "PATIENTCODE" %in% names(data))
-  
+
   data <- data %>%
     dplyr::mutate(
       EXPOSURE    = factor(EXPOSURE),
       PATIENTCODE = factor(PATIENTCODE)
     )
-  
+
   if (ctrl_level %in% levels(data$EXPOSURE))
     data$EXPOSURE <- relevel(data$EXPOSURE, ref = ctrl_level)
-  
+
   if (is.null(response_columns))
     response_columns <- names(data)[sapply(data, is.numeric)]
-  
+
   results_list <- list()
-  
+
   for (resp in response_columns) {
     if (!resp %in% names(data)) next
     df <- data %>% dplyr::filter(!is.na(.data[[resp]]))
     if (length(unique(df$EXPOSURE)) < 2) next
-    
+
     tp_term <- if ("TIMEPOINT" %in% names(df) &&
                    dplyr::n_distinct(df$TIMEPOINT[!is.na(df$TIMEPOINT)]) > 1) {
       " + TIMEPOINT"
@@ -255,7 +255,7 @@ exposure_lmer_pairwise <- function(data, group = "All", adjust_method = "fdr",
                  data = df),
       silent = TRUE)
     if (inherits(model, "try-error")) { warning("Model failed for ", resp); next }
-    
+
     emm      <- emmeans::emmeans(model, ~ EXPOSURE, weights = "equal")
     ctrl_idx <- which(levels(data$EXPOSURE) == ctrl_level)
     pairwise <- emmeans::contrast(emm, method = "trt.vs.ctrl",
@@ -264,7 +264,7 @@ exposure_lmer_pairwise <- function(data, group = "All", adjust_method = "fdr",
     pairwise_df$response <- resp
     results_list[[resp]] <- pairwise_df
   }
-  
+
   dplyr::bind_rows(results_list)
 }
 
@@ -279,30 +279,30 @@ interaction_lmer_pairwise <- function(data, group = "All", adjust_method = "fdr"
     data <- data %>%
       dplyr::mutate(TIMEPOINT = factor(TIMEPOINT, levels = TIMEPOINT_LEVELS))
   }
-  
+
   stopifnot("EXPOSURE" %in% names(data), "PATIENTCODE" %in% names(data),
             "SEX"      %in% names(data))
-  
+
   data <- data %>%
     dplyr::mutate(
       EXPOSURE    = factor(EXPOSURE),
       PATIENTCODE = factor(PATIENTCODE),
       SEX         = factor(SEX)
     )
-  
+
   if (ctrl_level %in% levels(data$EXPOSURE))
     data$EXPOSURE <- relevel(data$EXPOSURE, ref = ctrl_level)
-  
+
   if (is.null(response_columns))
     response_columns <- names(data)[sapply(data, is.numeric)]
-  
+
   results_list <- list()
-  
+
   for (resp in response_columns) {
     if (!resp %in% names(data)) next
     df <- data %>% dplyr::filter(!is.na(.data[[resp]]))
     if (length(unique(df$EXPOSURE)) < 2 || length(unique(df$SEX)) < 2) next
-    
+
     tp_term <- if ("TIMEPOINT" %in% names(df) &&
                    dplyr::n_distinct(df$TIMEPOINT[!is.na(df$TIMEPOINT)]) > 1) {
       " + TIMEPOINT"
@@ -317,7 +317,7 @@ interaction_lmer_pairwise <- function(data, group = "All", adjust_method = "fdr"
     if (inherits(model, "try-error")) {
       warning("Interaction model failed for ", resp); next
     }
-    
+
     emm_exp  <- emmeans::emmeans(model, ~ EXPOSURE, weights = "equal")
     ctrl_idx <- which(levels(data$EXPOSURE) == ctrl_level)
     pw_exp   <- emmeans::contrast(emm_exp, "trt.vs.ctrl",
@@ -325,17 +325,17 @@ interaction_lmer_pairwise <- function(data, group = "All", adjust_method = "fdr"
     exp_df   <- as.data.frame(summary(pw_exp))
     exp_df$type     <- "Exposure_vs_Control"
     exp_df$response <- resp
-    
+
     emm_int  <- emmeans::emmeans(model, ~ SEX | EXPOSURE)
     pw_int   <- emmeans::contrast(emm_int, "pairwise",
                                   simple = "SEX", combine = TRUE)
     int_df   <- as.data.frame(summary(pw_int))
     int_df$type     <- "Sex_within_Exposure"
     int_df$response <- resp
-    
+
     results_list[[resp]] <- dplyr::bind_rows(exp_df, int_df)
   }
-  
+
   dplyr::bind_rows(results_list)
 }
 
@@ -352,7 +352,7 @@ timepoint_lmer_within_exposure_sex <- function(
     stop("timepoint_lmer_within_exposure_sex(): missing columns: ",
          paste(missing_cols, collapse = ", "))
   }
-  
+
   df <- data %>%
     dplyr::filter(
       !is.na(.data[[response]]),
@@ -372,32 +372,32 @@ timepoint_lmer_within_exposure_sex <- function(
       SEX      = as.character(SEX)
     ) %>%
     dplyr::filter(TIMEPOINT %in% time_levels)
-  
+
   # Split by strata: CELLTYPE × HORMONE × EXPOSURE × SEX
   strata <- df %>%
     dplyr::group_by(CELLTYPE, HORMONE, EXPOSURE, SEX) %>%
     dplyr::group_split(.keep = TRUE)
-  
+
   one_group <- function(sdf) {
     key <- sdf %>%
       dplyr::slice(1) %>%
       dplyr::select(CELLTYPE, HORMONE, EXPOSURE, SEX)
-    
+
     # donors that have BOTH timepoints
     donor_tp <- sdf %>%
       dplyr::group_by(PATIENTCODE) %>%
       dplyr::summarise(n_tp = dplyr::n_distinct(TIMEPOINT), .groups = "drop")
-    
+
     keep_donors <- donor_tp %>%
       dplyr::filter(n_tp == length(time_levels)) %>%
       dplyr::pull(PATIENTCODE)
-    
+
     sdf2 <- sdf %>% dplyr::filter(PATIENTCODE %in% keep_donors)
-    
+
     n_donors <- dplyr::n_distinct(sdf2$PATIENTCODE)
     n_rows   <- nrow(sdf2)
     n_tp     <- dplyr::n_distinct(sdf2$TIMEPOINT)
-    
+
     # defaults
     out <- key %>%
       dplyr::mutate(
@@ -409,38 +409,38 @@ timepoint_lmer_within_exposure_sex <- function(
         converged = NA,
         note = NA_character_
       )
-    
+
     if (n_donors < min_donors || n_tp < 2) {
       out$note <- paste0("insufficient data: donors=", n_donors, ", timepoints=", n_tp)
       return(out)
     }
-    
+
     fml <- stats::as.formula(paste0("`", response, "` ~ TIMEPOINT + (1|PATIENTCODE)"))
-    
+
     fit <- tryCatch(
       lme4::lmer(fml, data = sdf2, REML = FALSE),
       error = function(e) e
     )
-    
+
     if (inherits(fit, "error")) {
       out$note <- paste("lmer_error:", fit$message)
       return(out)
     }
-    
+
     # p-values via lmerTest if available; otherwise fallback to Wald z approximation
     tidy_fix <- tryCatch(
       broom.mixed::tidy(fit, effects = "fixed"),
       error = function(e) NULL
     )
-    
+
     term_name <- paste0("TIMEPOINT", time_levels[2])
     if (is.null(tidy_fix) || !term_name %in% tidy_fix$term) {
       out$note <- "TIMEPOINT term not estimable"
       return(out)
     }
-    
+
     est <- tidy_fix$estimate[tidy_fix$term == term_name][1]
-    
+
     pval <- NA_real_
     if ("p.value" %in% names(tidy_fix)) {
       pval <- tidy_fix$p.value[tidy_fix$term == term_name][1]
@@ -452,21 +452,283 @@ timepoint_lmer_within_exposure_sex <- function(
         pval <- 2 * stats::pnorm(abs(z), lower.tail = FALSE)
       }
     }
-    
+
     out$estimate_144_vs_4 <- est
     out$p_value <- pval
     out$converged <- is.null(fit@optinfo$conv$lme4$messages)
     out$note <- ""
     out
   }
-  
+
   res <- dplyr::bind_rows(lapply(strata, one_group)) %>%
     dplyr::mutate(
       p_adj_BH = stats::p.adjust(p_value, method = "BH")
     ) %>%
     dplyr::arrange(response, CELLTYPE, HORMONE, EXPOSURE, SEX)
-  
+
   res
+}
+
+# ── LMER DiD: change from 4h to 144h relative to PBS control ───────────────────
+
+did_one_exposure_timecourse_lmer <- function(
+    data,
+    response,
+    target_exposure,
+    ctrl_level = PBS_LEVEL,
+    time_levels = c("4", "144"),
+    min_donors = 4,
+    pseudocount = PSEUDOCOUNT
+) {
+  out <- tibble::tibble(
+    exposure = target_exposure,
+    contrast = paste0(
+      "[(Exposure - ", ctrl_level, ") at ", time_levels[2], "h] - ",
+      "[(Exposure - ", ctrl_level, ") at ", time_levels[1], "h]"
+    ),
+    estimate = NA_real_,
+    SE = NA_real_,
+    df = NA_real_,
+    t.ratio = NA_real_,
+    conf.low = NA_real_,
+    conf.high = NA_real_,
+    p.value = NA_real_,
+    n_donors = 0L,
+    n_rows = 0L,
+    note = NA_character_
+  )
+
+  req <- c(response, "TIMEPOINT", "EXPOSURE", "PATIENTCODE")
+  missing_cols <- setdiff(req, names(data))
+  if (length(missing_cols) > 0) {
+    out$note <- paste("missing columns:", paste(missing_cols, collapse = ", "))
+    return(out)
+  }
+
+  df <- data %>%
+    dplyr::filter(
+      !is.na(.data[[response]]),
+      !is.na(TIMEPOINT),
+      !is.na(EXPOSURE),
+      !is.na(PATIENTCODE),
+      as.character(EXPOSURE) %in% c(ctrl_level, target_exposure)
+    ) %>%
+    dplyr::mutate(
+      TIMEPOINT = factor(as.character(TIMEPOINT), levels = time_levels),
+      EXPOSURE = factor(as.character(EXPOSURE), levels = c(ctrl_level, target_exposure)),
+      PATIENTCODE = factor(PATIENTCODE)
+    ) %>%
+    dplyr::filter(!is.na(TIMEPOINT), !is.na(EXPOSURE))
+
+  ex_levels <- sort(unique(as.character(df$EXPOSURE)))
+  if (!all(c(ctrl_level, target_exposure) %in% ex_levels)) {
+    out$note <- "control/treated exposure pair not both present"
+    return(out)
+  }
+
+  # Keep only donors with BOTH exposures at BOTH timepoints.
+  donor_grid <- df %>%
+    dplyr::distinct(PATIENTCODE, TIMEPOINT, EXPOSURE) %>%
+    dplyr::group_by(PATIENTCODE, TIMEPOINT) %>%
+    dplyr::summarise(n_exp = dplyr::n_distinct(EXPOSURE), .groups = "drop")
+
+  keep_donors <- donor_grid %>%
+    dplyr::filter(n_exp == 2L) %>%
+    dplyr::group_by(PATIENTCODE) %>%
+    dplyr::summarise(n_tp = dplyr::n_distinct(TIMEPOINT), .groups = "drop") %>%
+    dplyr::filter(n_tp == length(time_levels)) %>%
+    dplyr::pull(PATIENTCODE)
+
+  df_bal <- df %>%
+    dplyr::filter(PATIENTCODE %in% keep_donors) %>%
+    dplyr::mutate(log2_value = log2(as.numeric(.data[[response]]) + pseudocount)) %>%
+    dplyr::filter(is.finite(log2_value))
+
+  out$n_donors <- dplyr::n_distinct(df_bal$PATIENTCODE)
+  out$n_rows <- nrow(df_bal)
+
+  if (out$n_donors < min_donors || dplyr::n_distinct(df_bal$TIMEPOINT) < 2) {
+    out$note <- paste0("insufficient paired data: donors=", out$n_donors)
+    return(out)
+  }
+
+  fit <- tryCatch(
+    lme4::lmer(log2_value ~ TIMEPOINT * EXPOSURE + (1 | PATIENTCODE), data = df_bal, REML = FALSE),
+    error = function(e) e
+  )
+  if (inherits(fit, "error")) {
+    out$note <- paste("lmer_error:", fit$message)
+    return(out)
+  }
+
+  emm_grid <- tryCatch(
+    emmeans::emmeans(fit, ~ TIMEPOINT * EXPOSURE, weights = "equal"),
+    error = function(e) e
+  )
+  if (inherits(emm_grid, "error")) {
+    out$note <- paste("emmeans_error:", emm_grid$message)
+    return(out)
+  }
+
+  emm_df <- as.data.frame(summary(emm_grid))
+  need_rows <- expand.grid(
+    TIMEPOINT = time_levels,
+    EXPOSURE = c(ctrl_level, target_exposure),
+    stringsAsFactors = FALSE
+  )
+  row_key <- paste(emm_df$TIMEPOINT, emm_df$EXPOSURE, sep = "||")
+  req_key <- paste(need_rows$TIMEPOINT, need_rows$EXPOSURE, sep = "||")
+  if (!all(req_key %in% row_key)) {
+    out$note <- "DiD cell means not estimable for all required combinations"
+    return(out)
+  }
+
+  coef <- rep(0, nrow(emm_df))
+  coef[row_key == paste(time_levels[1], ctrl_level, sep = "||")] <- 1
+  coef[row_key == paste(time_levels[1], target_exposure, sep = "||")] <- -1
+  coef[row_key == paste(time_levels[2], ctrl_level, sep = "||")] <- -1
+  coef[row_key == paste(time_levels[2], target_exposure, sep = "||")] <- 1
+
+  did <- tryCatch(
+    emmeans::contrast(
+      emm_grid,
+      method = stats::setNames(
+        list(coef),
+        paste0("DiD_", time_levels[2], "_vs_", time_levels[1], "_vs_", ctrl_level)
+      ),
+      adjust = "none"
+    ),
+    error = function(e) e
+  )
+  if (inherits(did, "error")) {
+    out$note <- paste("did_contrast_error:", did$message)
+    return(out)
+  }
+
+  did_df <- as.data.frame(summary(did, infer = c(TRUE, TRUE)))
+  if (nrow(did_df) == 0) {
+    out$note <- "empty DiD contrast result"
+    return(out)
+  }
+
+  lower_col <- if ("lower.CL" %in% names(did_df)) "lower.CL" else if ("asymp.LCL" %in% names(did_df)) "asymp.LCL" else NA_character_
+  upper_col <- if ("upper.CL" %in% names(did_df)) "upper.CL" else if ("asymp.UCL" %in% names(did_df)) "asymp.UCL" else NA_character_
+
+  out$estimate <- did_df$estimate[1]
+  out$SE <- did_df$SE[1]
+  out$df <- if ("df" %in% names(did_df)) did_df$df[1] else NA_real_
+  out$t.ratio <- if ("t.ratio" %in% names(did_df)) did_df$`t.ratio`[1] else NA_real_
+  out$conf.low <- if (!is.na(lower_col)) did_df[[lower_col]][1] else NA_real_
+  out$conf.high <- if (!is.na(upper_col)) did_df[[upper_col]][1] else NA_real_
+  out$p.value <- did_df$p.value[1]
+  out$note <- ""
+
+  out
+}
+
+build_timecourse_did_table <- function(
+    data,
+    response = "Value",
+    ctrl_level = PBS_LEVEL,
+    time_levels = c("4", "144"),
+    min_donors = 4,
+    pseudocount = PSEUDOCOUNT,
+    alpha_q = ALPHA_Q,
+    include_all_sex = TRUE
+) {
+  required <- c(response, "CYTOKINE", "CELLTYPE", "HORMONE", "TIMEPOINT", "EXPOSURE", "PATIENTCODE", "SEX")
+  missing_cols <- setdiff(required, names(data))
+  if (length(missing_cols) > 0) {
+    stop("build_timecourse_did_table(): missing columns: ", paste(missing_cols, collapse = ", "))
+  }
+
+  observed_time_levels <- sort(unique(as.character(data$TIMEPOINT[!is.na(data$TIMEPOINT)])))
+  if (!all(time_levels %in% observed_time_levels)) {
+    warning("build_timecourse_did_table(): TIMEPOINT levels missing one of: ",
+            paste(time_levels, collapse = ", "))
+  }
+
+  base_df <- data %>%
+    dplyr::mutate(
+      TIMEPOINT = factor(as.character(TIMEPOINT), levels = time_levels),
+      EXPOSURE = as.character(EXPOSURE),
+      SEX = as.character(SEX)
+    ) %>%
+    dplyr::filter(!is.na(TIMEPOINT), !is.na(EXPOSURE), !is.na(SEX))
+
+  if (include_all_sex) {
+    base_df <- dplyr::bind_rows(base_df, base_df %>% dplyr::mutate(SEX = "All"))
+  }
+
+  treated_exposures <- setdiff(sort(unique(base_df$EXPOSURE)), ctrl_level)
+  if (length(treated_exposures) == 0) {
+    return(tibble::tibble(
+      cytokine = character(),
+      CELLTYPE = character(),
+      HORMONE = character(),
+      SEX = character(),
+      exposure = character(),
+      contrast = character(),
+      estimate = numeric(),
+      SE = numeric(),
+      conf.low = numeric(),
+      conf.high = numeric(),
+      p.value = numeric(),
+      q.value = numeric(),
+      direction = character(),
+      call = character(),
+      n_donors = integer(),
+      n_rows = integer(),
+      note = character()
+    ))
+  }
+
+  did_rows <- lapply(treated_exposures, function(trt) {
+    d_trt <- base_df %>%
+      dplyr::filter(EXPOSURE %in% c(ctrl_level, trt))
+
+    d_trt %>%
+      dplyr::group_by(CYTOKINE, CELLTYPE, HORMONE, SEX) %>%
+      dplyr::group_modify(~ {
+        did <- did_one_exposure_timecourse_lmer(
+          data = .x,
+          response = response,
+          target_exposure = trt,
+          ctrl_level = ctrl_level,
+          time_levels = time_levels,
+          min_donors = min_donors,
+          pseudocount = pseudocount
+        )
+        dplyr::bind_cols(.y, did)
+      }) %>%
+      dplyr::ungroup()
+  })
+
+  out <- dplyr::bind_rows(did_rows)
+  if (nrow(out) == 0) return(out)
+
+  out %>%
+    dplyr::mutate(
+      cytokine = as.character(CYTOKINE)
+    ) %>%
+    dplyr::select(
+      cytokine, CELLTYPE, HORMONE, SEX, exposure, contrast,
+      estimate, SE, conf.low, conf.high, p.value, n_donors, n_rows, note
+    ) %>%
+    dplyr::mutate(
+      q.value = stats::p.adjust(p.value, method = "fdr"),
+      direction = dplyr::case_when(
+        estimate > 0 ~ "increase",
+        estimate < 0 ~ "decrease",
+        TRUE ~ "no_change"
+      ),
+      call = dplyr::case_when(
+        !is.na(q.value) & q.value < alpha_q & estimate > 0 ~ "Increase over time vs PBS",
+        !is.na(q.value) & q.value < alpha_q & estimate < 0 ~ "Decrease over time vs PBS",
+        TRUE ~ "No significant change over time vs PBS"
+      )
+    ) %>%
+    dplyr::arrange(q.value, cytokine, CELLTYPE, HORMONE, SEX, exposure)
 }
 
 # ── ART pairwise ──────────────────────────────────────────────────────────────
@@ -489,35 +751,35 @@ exposure_art_pairwise <- function(data, group = "All", adjust_method = "fdr",
     filtered_data <- filtered_data %>%
       dplyr::mutate(TIMEPOINT = factor(TIMEPOINT, levels = TIMEPOINT_LEVELS))
   }
-  
+
   if (is.null(response_columns))
     response_columns <- names(filtered_data)[sapply(filtered_data, is.numeric)]
-  
+
   results_list <- list()
-  
+
   for (response in response_columns) {
     if (!response %in% names(filtered_data)) {
       warning("Column ", response, " not found"); next
     }
-    
+
     tp_term <- if ("TIMEPOINT" %in% names(filtered_data) &&
                    dplyr::n_distinct(filtered_data$TIMEPOINT[!is.na(filtered_data$TIMEPOINT)]) > 1) {
       " + TIMEPOINT"
     } else {
       ""
     }
-    
+
     formula <- if (group == "All") {
       as.formula(paste0(response, " ~ EXPOSURE * SEX", tp_term, " + (1|PATIENTCODE)"))
     } else {
       as.formula(paste0(response, " ~ EXPOSURE", tp_term, " + (1|PATIENTCODE)"))
     }
-    
+
     m.art <- try(ARTool::art(formula, data = filtered_data), silent = TRUE)
     if (inherits(m.art, "try-error")) {
       warning("ART failed for ", response); next
     }
-    
+
     anova_res   <- anova(m.art)
     exposure_p  <- {
       r <- anova_res[grepl("^EXPOSURE$", anova_res[[1]], ignore.case = TRUE), ]
@@ -527,7 +789,7 @@ exposure_art_pairwise <- function(data, group = "All", adjust_method = "fdr",
       r <- anova_res[grepl("EXPOSURE:SEX", anova_res[[1]], ignore.case = TRUE), ]
       if (nrow(r) > 0) r[["Pr(>F)"]][1] else NA
     } else NA
-    
+
     # art.con() is the correct way to get pairwise contrasts from an ART model
     # (artlm.con() + emmeans() produces unreliable d.f. for interaction contrasts).
     pairwise_con <- try(
@@ -540,14 +802,14 @@ exposure_art_pairwise <- function(data, group = "All", adjust_method = "fdr",
     ctrl_idx <- which(levels(filtered_data$EXPOSURE) == ctrl_level)
     pairwise <- emmeans::contrast(pairwise_con, "trt.vs.ctrl",
                                   ref = ctrl_idx, adjust = adjust_method)
-    
+
     res               <- as.data.frame(pairwise)
     res$response      <- response
     res$exposure_p    <- exposure_p
     res$interaction_p <- interaction_p
     results_list[[response]] <- res
   }
-  
+
   dplyr::bind_rows(results_list)
 }
 
@@ -560,13 +822,13 @@ run_lmer_chunk <- function(label, celltype_filter, hormone_filter,
                            alpha_q       = ALPHA_Q,
                            trend_a       = TREND_ALPHA) {
   cat("\n── LMER:", label, "──\n")
-  
+
   if (is.null(sala_full))
     stop("sala_full must be provided as a data frame containing the full WSTC dataset")
-  
+
   d_sub <- sala_full %>%
     dplyr::filter(CELLTYPE == celltype_filter, HORMONE == hormone_filter)
-  
+
   cytokine_cols <- intersect(names(d_sub), llod_table$Analyte)
   imp_res_all <- impute_lod_sqrt2(
     d_sub,
@@ -586,17 +848,17 @@ run_lmer_chunk <- function(label, celltype_filter, hormone_filter,
     cytokine_llod = llod_table,
     zero_cutoff = zero_co
   )
-  
+
   d_imp <- imp_res_all$data
   valid_cyts_all <- imp_res_all$valid_cytokines
   valid_cyts_f <- imp_res_f$valid_cytokines
   valid_cyts_m <- imp_res_m$valid_cytokines
   valid_cyts <- sort(unique(c(valid_cyts_all, valid_cyts_f, valid_cyts_m)))
-  
+
   cat("  ZERO_CUTOFF valid cytokines | All:", length(valid_cyts_all),
       " F:", length(valid_cyts_f),
       " M:", length(valid_cyts_m), "\n")
-  
+
   if (length(valid_cyts) == 0) {
     warning("run_lmer_chunk(", label, "): no valid cytokines after ZERO_CUTOFF filtering.")
     empty_sig <- tibble::tibble(Measurement = character(), PBS_Control = character())
@@ -611,22 +873,22 @@ run_lmer_chunk <- function(label, celltype_filter, hormone_filter,
       )
     )))
   }
-  
+
   d_filt <- d_imp %>%
     dplyr::filter(EXPOSURE != "Untreated_Control") %>%
     dplyr::mutate(EXPOSURE = factor(EXPOSURE), SEX = factor(SEX), PATIENTCODE = factor(PATIENTCODE))
-  
+
   if ("TIMEPOINT" %in% names(d_filt)) {
     d_filt <- d_filt %>%
       dplyr::mutate(TIMEPOINT = factor(TIMEPOINT, levels = TIMEPOINT_LEVELS))
   }
-  
+
   msd_sum <- summarize_to_wide(d_filt, measure_vars = valid_cyts)
-  
+
   pbs_ctl <- msd_sum %>%
     dplyr::select(Measurement, `PBS_Control`) %>%
     dplyr::arrange(Measurement)
-  
+
   lmer_All <- exposure_lmer_pairwise_by_timepoint(
     d_filt, "All", "fdr", valid_cyts_all, ctrl_level = PBS_LEVEL
   )
@@ -637,7 +899,7 @@ run_lmer_chunk <- function(label, celltype_filter, hormone_filter,
     d_filt, "M",   "fdr", valid_cyts_m, ctrl_level = PBS_LEVEL
   )
   lmer_int <- interaction_lmer_pairwise(d_filt, "All", "fdr", valid_cyts)
-  
+
   # Convert LMER results to plot-compatible format (used by cytokine dotplots
   # and bar plots instead of the retired screen_one_exposure_lmer_log2()).
   lmer_plot_data <- lmer_results_to_plot_format(
@@ -646,7 +908,7 @@ run_lmer_chunk <- function(label, celltype_filter, hormone_filter,
     hormone  = hormone_filter,
     alpha    = alpha_q
   )
-  
+
   out_csv <- paste0("MSD_WSTC_", label, "_lmer.csv")
   sig_tbl <- build_lmer_sig_table(
     lmer_All      = lmer_All,
@@ -659,7 +921,7 @@ run_lmer_chunk <- function(label, celltype_filter, hormone_filter,
     alpha         = alpha_q,
     trend_alpha   = trend_a
   )
-  
+
   cat("  Saved:", out_csv, "\n")
   # Return significance table, interaction results, and plot-ready LMER data
   invisible(list(sig_table = sig_tbl, lmer_interaction = lmer_int,
@@ -673,7 +935,7 @@ build_lmer_sig_table <- function(lmer_All, lmer_F, lmer_M,
                                  alpha       = 0.1,
                                  trend_alpha = 0.2,
                                  epsilon     = 1e-5) {
-  
+
   # Step 6: format with group suffixes
   fmt <- function(df, grp) {
     col <- paste0("response_", grp)
@@ -686,7 +948,7 @@ build_lmer_sig_table <- function(lmer_All, lmer_F, lmer_M,
   combined <- dplyr::bind_rows(fmt(lmer_All, "All"),
                                fmt(lmer_F,   "F"),
                                fmt(lmer_M,   "M"))
-  
+
   # Step 7: apply FDR correction per group, then assign direction-aware stars
   # Stars are based on the FDR-adjusted q-value, not the raw p.value.
   stars_df <- combined %>%
@@ -699,7 +961,7 @@ build_lmer_sig_table <- function(lmer_All, lmer_F, lmer_M,
       q < 0.05  ~ "*",
       TRUE      ~ ""
     ))
-  
+
   # Steps 8-9: pivot stars long
   stars_long <- stars_df %>%
     tidyr::pivot_longer(
@@ -714,17 +976,17 @@ build_lmer_sig_table <- function(lmer_All, lmer_F, lmer_M,
                         names_to = "Exposure", values_to = "Stars") %>%
     dplyr::mutate(Exposure = stringr::str_trim(
       gsub(" - PBS_Control$", "", Exposure)))
-  
+
   # Step 10: summary without PBS
   wide_no_pbs <- msd_summary %>%
     dplyr::select(-`PBS_Control`) %>%
     dplyr::arrange(Measurement) %>%
     dplyr::mutate(Analyte_Base = gsub("_.*", "", Measurement)) %>%
     dplyr::left_join(cytokine_llod, by = c("Analyte_Base" = "Analyte"))
-  
+
   if (!"LLOD" %in% colnames(wide_no_pbs))
     stop("LLOD column not found. Check cytokine_llod data.")
-  
+
   # Step 11: pivot long + numeric values
   long_vals <- wide_no_pbs %>%
     tidyr::pivot_longer(
@@ -735,7 +997,7 @@ build_lmer_sig_table <- function(lmer_All, lmer_F, lmer_M,
     dplyr::mutate(
       Value_num = as.numeric(sub("^(\\d*\\.?\\d+).*", "\\1", Value_full))
     )
-  
+
   # Step 12: merge stars + LLOD check
   long_vals <- long_vals %>%
     dplyr::left_join(stars_long, by = c("Measurement","Exposure")) %>%
@@ -744,15 +1006,15 @@ build_lmer_sig_table <- function(lmer_All, lmer_F, lmer_M,
       paste0(Value_full, " ", Stars),
       Value_full
     ))
-  
+
   # Step 13: pivot wide
   wide_final <- long_vals %>%
     dplyr::select(Measurement, Exposure, Value_final, LLOD, Analyte_Base) %>%
     tidyr::pivot_wider(names_from = Exposure, values_from = Value_final)
-  
+
   # Step 14: add PBS, apply epsilon, export
   pbs_numeric <- as.numeric(sub(" \u00b1.*", "", pbs_control$`PBS_Control`))
-  
+
   sig_table <- wide_final %>%
     dplyr::left_join(pbs_control, by = "Measurement") %>%
     dplyr::mutate(dplyr::across(
@@ -762,14 +1024,14 @@ build_lmer_sig_table <- function(lmer_All, lmer_F, lmer_M,
     )) %>%
     dplyr::select(Measurement, `PBS_Control`, dplyr::everything(),
                   -Analyte_Base, -LLOD)
-  
+
   save_table(sig_table, out_filename)
   invisible(sig_table)
 }
 
 # ── Convert exposure_lmer_pairwise() output to plot-compatible format ─────────
 # Used internally by run_lmer_chunk() to produce lmer_plot_data.
-# 
+#
 exposure_lmer_pairwise_by_timepoint <- function(
     data,
     group = "All",
@@ -786,14 +1048,14 @@ exposure_lmer_pairwise_by_timepoint <- function(
   # - Fit: response ~ EXPOSURE + (1|PATIENTCODE)
   # - Return trt-vs-ctrl contrast only for that treated exposure.
   # ---------------------------------------------------------------------------
-  
+
   required_cols <- c("TIMEPOINT", "EXPOSURE", "PATIENTCODE")
   missing_cols  <- setdiff(required_cols, names(data))
   if (length(missing_cols) > 0) {
     stop("exposure_lmer_pairwise_by_timepoint(): missing columns: ",
          paste(missing_cols, collapse = ", "))
   }
-  
+
   # Optional SEX filter for group-specific runs
   d0 <- data
   if (group != "All") {
@@ -802,7 +1064,7 @@ exposure_lmer_pairwise_by_timepoint <- function(
     }
     d0 <- d0 %>% dplyr::filter(as.character(SEX) == group)
   }
-  
+
   # Standardize core factors
   d0 <- d0 %>%
     dplyr::mutate(
@@ -811,24 +1073,24 @@ exposure_lmer_pairwise_by_timepoint <- function(
       PATIENTCODE = factor(PATIENTCODE)
     ) %>%
     dplyr::filter(!is.na(TIMEPOINT), !is.na(EXPOSURE), !is.na(PATIENTCODE))
-  
+
   if (ctrl_level %in% levels(d0$EXPOSURE)) {
     d0$EXPOSURE <- stats::relevel(d0$EXPOSURE, ref = ctrl_level)
   } else {
     warning("exposure_lmer_pairwise_by_timepoint(): control level '",
             ctrl_level, "' not present after filtering.")
   }
-  
+
   if (is.null(response_columns)) {
     response_columns <- names(d0)[vapply(d0, is.numeric, logical(1))]
   } else {
     response_columns <- intersect(response_columns, names(d0))
   }
-  
+
   # Helper: keep only matched donor-strata for one treated exposure vs PBS
   match_pairs_for_exposure <- function(df, exposure, pbs = ctrl_level) {
     keys <- intersect(c("PATIENTCODE", "CELLTYPE", "HORMONE", "SEX", "TIMEPOINT"), names(df))
-    
+
     keep <- df %>%
       dplyr::filter(EXPOSURE %in% c(pbs, exposure)) %>%
       dplyr::distinct(dplyr::across(dplyr::all_of(c(keys, "EXPOSURE")))) %>%
@@ -838,36 +1100,36 @@ exposure_lmer_pairwise_by_timepoint <- function(
         values_from = present,
         values_fill = 0
       )
-    
+
     if (!(pbs %in% names(keep)) || !(exposure %in% names(keep))) {
       return(df[0, , drop = FALSE])
     }
-    
+
     keep <- keep %>%
       dplyr::filter(.data[[pbs]] == 1L, .data[[exposure]] == 1L) %>%
       dplyr::select(dplyr::all_of(keys))
-    
+
     df %>%
       dplyr::filter(EXPOSURE %in% c(pbs, exposure)) %>%
       dplyr::inner_join(keep, by = keys)
   }
-  
+
   out <- list()
   idx <- 1L
-  
+
   # loop by timepoint
   for (tp in levels(d0$TIMEPOINT)) {
     d_tp <- d0 %>% dplyr::filter(as.character(TIMEPOINT) == tp)
     if (nrow(d_tp) == 0) next
-    
+
     # treated exposures present at this timepoint (excluding control)
     trt_levels <- setdiff(sort(unique(as.character(d_tp$EXPOSURE))), ctrl_level)
     if (length(trt_levels) == 0) next
-    
+
     for (trt in trt_levels) {
       d_pair_input <- d_tp %>% dplyr::filter(EXPOSURE %in% c(ctrl_level, trt))
       n_pair_input <- nrow(d_pair_input)
-      
+
       # strict pair-match for THIS exposure vs PBS at THIS timepoint
       d_pair <- match_pairs_for_exposure(d_tp, exposure = trt, pbs = ctrl_level)
       if (nrow(d_pair) == 0) {
@@ -880,20 +1142,20 @@ exposure_lmer_pairwise_by_timepoint <- function(
           " retained ", nrow(d_pair), "/", n_pair_input,
           " rows after matching to ", ctrl_level, "\n",
           sep = "")
-      
+
       # Ensure both levels exist post-match
       ex_levels <- unique(as.character(d_pair$EXPOSURE))
       if (!all(c(ctrl_level, trt) %in% ex_levels)) next
-      
+
       for (resp in response_columns) {
         df_resp <- d_pair %>% dplyr::filter(!is.na(.data[[resp]]))
         if (nrow(df_resp) < 3) next
         if (dplyr::n_distinct(df_resp$EXPOSURE) < 2) next
-        
+
         # Re-factor and set control reference within this pair
         df_resp <- df_resp %>%
           dplyr::mutate(EXPOSURE = factor(EXPOSURE, levels = c(ctrl_level, trt)))
-        
+
         # model
         fit <- try(
           lme4::lmer(
@@ -904,35 +1166,35 @@ exposure_lmer_pairwise_by_timepoint <- function(
           silent = TRUE
         )
         if (inherits(fit, "try-error")) next
-        
+
         # contrast trt vs ctrl
         emm <- try(emmeans::emmeans(fit, ~ EXPOSURE, weights = "equal"), silent = TRUE)
         if (inherits(emm, "try-error")) next
-        
+
         # since levels are explicitly c(ctrl, trt), reference is 1
         pw <- try(
           emmeans::contrast(emm, method = "trt.vs.ctrl", ref = 1, adjust = adjust_method),
           silent = TRUE
         )
         if (inherits(pw, "try-error")) next
-        
+
         s <- as.data.frame(summary(pw))
         if (nrow(s) == 0) next
-        
+
         # keep only the target treated row if multiple show up
         s <- s %>%
           dplyr::filter(grepl(paste0("^", trt, " - "), contrast) |
                           grepl(paste0("^", trt, "/"), contrast) |
                           grepl(trt, contrast))
-        
+
         if (nrow(s) == 0) next
-        
+
         # donor count in matched pair set (for diagnostics)
         n_donors <- dplyr::n_distinct(df_resp$PATIENTCODE)
         n_rows_pair <- nrow(df_resp)
         n_ctrl_rows <- sum(as.character(df_resp$EXPOSURE) == ctrl_level, na.rm = TRUE)
         n_trt_rows <- sum(as.character(df_resp$EXPOSURE) == trt, na.rm = TRUE)
-        
+
         out[[idx]] <- tibble::tibble(
           contrast  = s$contrast[1],
           estimate  = s$estimate[1],
@@ -952,7 +1214,7 @@ exposure_lmer_pairwise_by_timepoint <- function(
       }
     }
   }
-  
+
   res <- dplyr::bind_rows(out)
   if (nrow(res) == 0) {
     return(tibble::tibble(
@@ -994,13 +1256,13 @@ lmer_results_to_plot_format <- function(lmer_All, lmer_F, lmer_M,
       dplyr::select(SEX, CELLTYPE, HORMONE, TIMEPOINT, EXPOSURE, CYTOKINE,
                     estimate, SE, p.value)
   }
-  
+
   combined <- dplyr::bind_rows(
     parse_rows(lmer_All, "All"),
     parse_rows(lmer_F,   "F"),
     parse_rows(lmer_M,   "M")
   )
-  
+
   combined %>%
     dplyr::group_by(CYTOKINE) %>%
     dplyr::mutate(q = p.adjust(p.value, method = "fdr")) %>%
@@ -1014,7 +1276,7 @@ impute_lod_sqrt2 <- function(input_data, cols = NULL, cytokine_llod, zero_cutoff
   if (is.null(cols)) {
     cols <- intersect(names(input_data), cytokine_llod$Analyte)
   }
-  
+
   llod_map <- stats::setNames(cytokine_llod$LLOD, cytokine_llod$Analyte)
   valid_cytokines <- cols[vapply(cols, function(col) {
     vals <- suppressWarnings(as.numeric(input_data[[col]]))
@@ -1022,9 +1284,9 @@ impute_lod_sqrt2 <- function(input_data, cols = NULL, cytokine_llod, zero_cutoff
     p_zero <- mean(is.na(vals) | vals <= 0)
     is.finite(p_zero) && p_zero <= zero_cutoff
   }, logical(1))]
-  
+
   skipped_cytokines <- setdiff(cols, valid_cytokines)
-  
+
   out <- input_data
   for (col in valid_cytokines) {
     llod_val <- llod_map[[col]]
@@ -1034,7 +1296,7 @@ impute_lod_sqrt2 <- function(input_data, cols = NULL, cytokine_llod, zero_cutoff
       out[[col]] <- vals
     }
   }
-  
+
   list(data = out, valid_cytokines = valid_cytokines, skipped_cytokines = skipped_cytokines)
 }
 
@@ -1044,7 +1306,7 @@ summarize_to_wide <- function(data, measure_vars) {
     warning("summarize_to_wide(): no measure_vars found in data; returning empty summary.")
     return(tibble::tibble(Measurement = character()))
   }
-  
+
   long <- data %>%
     dplyr::select(dplyr::any_of(c("EXPOSURE", "SEX", measure_vars))) %>%
     tidyr::pivot_longer(
@@ -1052,7 +1314,7 @@ summarize_to_wide <- function(data, measure_vars) {
       names_to = "CYTOKINE",
       values_to = "VALUE"
     )
-  
+
   by_sex <- long %>%
     dplyr::group_by(CYTOKINE, SEX, EXPOSURE) %>%
     dplyr::summarise(
@@ -1061,7 +1323,7 @@ summarize_to_wide <- function(data, measure_vars) {
       .groups = "drop"
     ) %>%
     dplyr::mutate(Measurement = paste0(CYTOKINE, "_", SEX))
-  
+
   all_rows <- long %>%
     dplyr::group_by(CYTOKINE, EXPOSURE) %>%
     dplyr::summarise(
@@ -1070,7 +1332,7 @@ summarize_to_wide <- function(data, measure_vars) {
       .groups = "drop"
     ) %>%
     dplyr::mutate(Measurement = paste0(CYTOKINE, "_All"))
-  
+
   dplyr::bind_rows(by_sex, all_rows) %>%
     dplyr::mutate(
       mu = ifelse(is.nan(mu), NA_real_, mu),

@@ -13,6 +13,18 @@ This repository contains modular R code for:
 - Variance partitioning and PCA across timepoints
 - LDH / TEER analysis scaffolding
 
+## DiD timecourse interpretation
+
+Timecourse inference now includes a difference-in-differences (DiD) mixed-model workflow for cytokines:
+\[
+[(\text{Exposure} - \text{PBS\_Control})_{144h}] - [(\text{Exposure} - \text{PBS\_Control})_{4h}]
+\]
+using `log2(Value + pseudocount)` and donor random intercepts.
+Calls use BH-FDR (`q < 0.05`) plus direction:
+- **Increase over time vs PBS**: `q < 0.05` and estimate > 0
+- **Decrease over time vs PBS**: `q < 0.05` and estimate < 0
+- **No significant change over time vs PBS**: otherwise
+
 ## Project structure
 
 ```text
