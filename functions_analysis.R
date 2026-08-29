@@ -67,10 +67,15 @@ make_log2fc_long <- function(df, cytokine_cols,
     dplyr::left_join(pbs, by = join_keys) %>%
     dplyr::mutate(log2FC = log2_val - log2_pbs)
 
+  # any_of() is not valid inside distinct() (a data-masking verb); build the
+  # column list explicitly and use across(all_of(...)) instead.
+  distinct_cols <- intersect(
+    c("PATIENTCODE", "SEX", "CELLTYPE", "HORMONE", "TIMEPOINT", "EXPOSURE", "CYTOKINE"),
+    names(out)
+  )
   missing_pbs <- out %>%
     dplyr::filter(is.na(log2_pbs)) %>%
-    dplyr::distinct(PATIENTCODE, SEX, CELLTYPE, HORMONE,
-                    dplyr::any_of("TIMEPOINT"), EXPOSURE, CYTOKINE)
+    dplyr::distinct(dplyr::across(dplyr::all_of(distinct_cols)))
 
   if (nrow(missing_pbs) > 0) {
     warning(
