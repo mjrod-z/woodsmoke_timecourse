@@ -297,6 +297,9 @@ plot_timepoint_spaghetti <- function(df_long, cytokine_name, did_stats,
   
   if (nrow(d) == 0) return(NULL)
 
+  timepoint_levels <- levels(d$TIMEPOINT)
+  annot_timepoint <- tail(timepoint_levels[!is.na(timepoint_levels)], 1)
+
   panel_ranges <- d %>%
     dplyr::group_by(CELLTYPE, HORMONE, EXPOSURE) %>%
     dplyr::summarise(
@@ -328,7 +331,7 @@ plot_timepoint_spaghetti <- function(df_long, cytokine_name, did_stats,
       )
     ) %>%
     dplyr::left_join(panel_ranges, by = c("CELLTYPE", "HORMONE", "EXPOSURE")) %>%
-    dplyr::mutate(TIMEPOINT = factor("144", levels = c("4", "144")))
+    dplyr::mutate(TIMEPOINT = factor(annot_timepoint, levels = timepoint_levels))
 
   ref_ann <- panel_ranges %>%
     dplyr::filter(as.character(EXPOSURE) == PBS_LEVEL) %>%
@@ -336,7 +339,7 @@ plot_timepoint_spaghetti <- function(df_long, cytokine_name, did_stats,
       CELLTYPE,
       HORMONE,
       EXPOSURE,
-      TIMEPOINT = factor("144", levels = c("4", "144")),
+      TIMEPOINT = factor(annot_timepoint, levels = timepoint_levels),
       y_annot,
       did_label = "PBS reference",
       did_color = "grey35"
