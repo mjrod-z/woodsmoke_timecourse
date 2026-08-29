@@ -285,7 +285,8 @@ make_cytokine_barplot <- function(summary_raw, d_raw, cyt,
   p
 }
 # ── Timepoint Visualizations  ───────────────────────────────
-plot_timepoint_spaghetti <- function(df_long, cytokine_name, y_log2 = TRUE) {
+plot_timepoint_spaghetti <- function(df_long, cytokine_name, did_stats,
+                                     y_log2 = TRUE, alpha_q = ALPHA_Q) {
   d <- df_long %>%
     dplyr::filter(CYTOKINE == cytokine_name, SEX %in% c("F", "M")) %>%
     dplyr::mutate(
@@ -295,36 +296,110 @@ plot_timepoint_spaghetti <- function(df_long, cytokine_name, y_log2 = TRUE) {
     dplyr::filter(!is.na(y), !is.na(TIMEPOINT), !is.na(CELLTYPE), !is.na(HORMONE), !is.na(EXPOSURE))
   
   if (nrow(d) == 0) return(NULL)
+
+  panel_ranges <- d %>%
+    dplyr::group_by(CELLTYPE, HORMONE, EXPOSURE) %>%
+    dplyr::summarise(
+      y_min = min(y, na.rm = TRUE),
+      y_max = max(y, na.rm = TRUE),
+      .groups = "drop"
+    ) %>%
+    dplyr::mutate(
+      y_span = dplyr::if_else(y_max > y_min, y_max - y_min, 0.5),
+      y_annot = y_max + (0.12 * y_span)
+    )
+
+  did_ann <- did_stats %>%
+    dplyr::filter(cytokine == cytokine_name, SEX == "All") %>%
+    dplyr::transmute(
+      CELLTYPE,
+      HORMONE,
+      EXPOSURE = exposure,
+      did_label = dplyr::case_when(
+        is.na(q.value) ~ "DiD not estimable",
+        q.value < alpha_q & estimate > 0 ~ paste0("DiD \u2191 ", formatC(q.value, format = "fg", digits = 2)),
+        q.value < alpha_q & estimate < 0 ~ paste0("DiD \u2193 ", formatC(q.value, format = "fg", digits = 2)),
+        TRUE ~ paste0("DiD ns ", formatC(q.value, format = "fg", digits = 2))
+      ),
+      did_color = dplyr::case_when(
+        !is.na(q.value) & q.value < alpha_q & estimate > 0 ~ "#D7191C",
+        !is.na(q.value) & q.value < alpha_q & estimate < 0 ~ "#2C7BB6",
+        TRUE ~ "grey35"
+      )
+    ) %>%
+    dplyr::left_join(panel_ranges, by = c("CELLTYPE", "HORMONE", "EXPOSURE")) %>%
+    dplyr::mutate(TIMEPOINT = factor("144", levels = c("4", "144")))
+
+  ref_ann <- panel_ranges %>%
+    dplyr::filter(as.character(EXPOSURE) == PBS_LEVEL) %>%
+    dplyr::transmute(
+      CELLTYPE,
+      HORMONE,
+      EXPOSURE,
+      TIMEPOINT = factor("144", levels = c("4", "144")),
+      y_annot,
+      did_label = "PBS reference",
+      did_color = "grey35"
+    )
+
+  ann <- dplyr::bind_rows(did_ann, ref_ann)
   
   ggplot2::ggplot(d, ggplot2::aes(TIMEPOINT, y, group = PATIENTCODE, color = SEX)) +
     ggplot2::geom_line(alpha = 0.35) +
     ggplot2::geom_point(size = 1.5) +
+    ggplot2::geom_text(
+      data = ann,
+      ggplot2::aes(x = TIMEPOINT, y = y_annot, label = did_label, color = did_color),
+      inherit.aes = FALSE,
+      hjust = 1,
+      vjust = 0,
+      size = 3.2,
+      fontface = "bold"
+    ) +
     ggplot2::facet_grid(CELLTYPE + HORMONE ~ EXPOSURE, scales = "free_y", drop = TRUE) +
+    ggplot2::scale_color_manual(
+      values = c("F" = "#C06C84", "M" = "#355C7D", "#D7191C" = "#D7191C",
+                 "#2C7BB6" = "#2C7BB6", "grey35" = "grey35"),
+      breaks = c("F", "M"),
+      name = "Sex"
+    ) +
     ggplot2::theme_bw() +
-    ggplot2::labs(title = paste0(cytokine_name, " — 4 vs 144"), x = "Timepoint", y = "log2(Value+pseudocount)")
+    ggplot2::labs(
+      title = paste0(cytokine_name, " — raw trajectories with DiD annotations"),
+      subtitle = "Panel labels report pooled DiD q-values relative to PBS; lines remain raw donor trajectories.",
+      x = "Timepoint",
+      y = "log2(Value+pseudocount)"
+    )
 }
-plot_timepoint_delta_heatmap <- function(df_long) {
-  dsum <- df_long %>%
+plot_timepoint_delta_heatmap <- function(did_stats, alpha_q = ALPHA_Q) {
+  dsum <- did_stats %>%
+    dplyr::filter(!is.na(cytokine), !is.na(exposure), SEX %in% c("All", "F", "M")) %>%
     dplyr::mutate(
-      TIMEPOINT = factor(as.character(TIMEPOINT), levels = c("4","144")),
-      val = log2(as.numeric(Value) + PSEUDOCOUNT)
-    ) %>%
-    dplyr::group_by(CYTOKINE, CELLTYPE, HORMONE, SEX, EXPOSURE, TIMEPOINT) %>%
-    dplyr::summarise(mu = mean(val, na.rm = TRUE), .groups = "drop") %>%
-    tidyr::pivot_wider(names_from = TIMEPOINT, values_from = mu) %>%
-    dplyr::mutate(delta_144_vs_4 = `144` - `4`)
-  
+      SEX = factor(SEX, levels = c("All", "F", "M")),
+      exposure = factor(exposure, levels = unique(exposure)),
+      cytokine = factor(cytokine, levels = rev(unique(cytokine)))
+    )
+
+  if (nrow(dsum) == 0) return(NULL)
+
   ggplot2::ggplot(
     dsum,
-    ggplot2::aes(x = EXPOSURE, y = CYTOKINE, fill = delta_144_vs_4)
+    ggplot2::aes(x = exposure, y = cytokine, fill = estimate)
   ) +
     ggplot2::geom_tile(color = "white", linewidth = 0.2) +
+    ggplot2::geom_point(
+      data = dsum %>% dplyr::filter(!is.na(q.value) & q.value < alpha_q),
+      shape = 8,
+      size = 2.2,
+      color = "black"
+    ) +
     ggplot2::facet_grid(CELLTYPE + HORMONE ~ SEX, scales = "free_y", space = "free_y") +
     ggplot2::scale_fill_gradient2(low = "#2C7BB6", mid = "white", high = "#D7191C", midpoint = 0) +
     ggplot2::theme_minimal(base_size = 11) +
     ggplot2::labs(
-      title = "Timepoint effect heatmap (144 - 4, log2 scale)",
-      x = "Exposure", y = "Cytokine", fill = "Δ log2"
+      title = "DiD heatmap relative to PBS",
+      subtitle = "Fill shows [(Exposure - PBS)144h] - [(Exposure - PBS)4h]; stars mark q < 0.05.",
+      x = "Exposure", y = "Cytokine", fill = "DiD log2"
     )
 }
 

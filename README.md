@@ -9,6 +9,7 @@ This repository contains modular R code for:
 - MSD cytokine data loading and preprocessing
 - LLOD-based imputation
 - Timepoint-aware (`_4`, `_144`) WSTC assembly and mixed-effects model screening across airway type, hormone treatment, sex, and timepoint
+- DiD-annotated timecourse spaghetti plots and DiD heatmaps relative to PBS baseline
 - Cytokine dotplots, barplots, and histograms (faceted by `CELLTYPE × TIMEPOINT`)
 - Variance partitioning and PCA across timepoints
 - LDH / TEER analysis scaffolding
@@ -24,6 +25,7 @@ Calls use BH-FDR (`q < 0.05`) plus direction:
 - **Increase over time vs PBS**: `q < 0.05` and estimate > 0
 - **Decrease over time vs PBS**: `q < 0.05` and estimate < 0
 - **No significant change over time vs PBS**: otherwise
+Timepoint visualizations use this DiD table for cytokine ranking, annotations, and heatmap values so plots do not present within-exposure 4h-vs-144h statistics as the main inference.
 
 ## Project structure
 
