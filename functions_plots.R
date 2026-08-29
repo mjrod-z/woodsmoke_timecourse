@@ -395,12 +395,23 @@ plot_timepoint_spaghetti <- function(df_long, cytokine_name, did_stats,
     )
 }
 plot_timepoint_delta_heatmap <- function(did_stats, alpha_q = ALPHA_Q) {
+  exposure_levels <- did_stats %>%
+    dplyr::pull(exposure) %>%
+    as.character() %>%
+    unique() %>%
+    sort()
+  cytokine_levels <- did_stats %>%
+    dplyr::pull(cytokine) %>%
+    as.character() %>%
+    unique() %>%
+    sort()
+
   dsum <- did_stats %>%
     dplyr::filter(!is.na(cytokine), !is.na(exposure), SEX %in% c("All", "F", "M")) %>%
     dplyr::mutate(
       SEX = factor(SEX, levels = c("All", "F", "M")),
-      exposure = factor(exposure, levels = unique(exposure)),
-      cytokine = factor(cytokine, levels = rev(unique(cytokine)))
+      exposure = factor(exposure, levels = exposure_levels),
+      cytokine = factor(cytokine, levels = rev(cytokine_levels))
     )
 
   if (nrow(dsum) == 0) return(NULL)
