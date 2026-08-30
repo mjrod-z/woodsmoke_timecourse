@@ -263,6 +263,8 @@ cat("First few global cytokines:", paste(head(imp$valid_cytokines), collapse = "
 
 Runs the 14-step lmer → significance-table pipeline for each of the four CELLTYPE × HORMONE strata. `run_lmer_chunk()` lives in `functions_analysis.R` and calls `exposure_lmer_pairwise()`, `interaction_lmer_pairwise()`, `summarize_to_wide()`, and `build_lmer_sig_table()`. LMER formulas include TIMEPOINT as a fixed effect when both `4` and `144` are present. Each call also returns `lmer_plot_data` — a tidy tibble (SEX / CELLTYPE / HORMONE / TIMEPOINT / EXPOSURE / CYTOKINE / q / sig) used by the dotplot section below as the single source of statistical truth.
 
+For downstream analyses, each stratum now writes one CSV per timepoint (`*_4h.csv`, `*_144h.csv`) in addition to the legacy combined file.
+
 ## LAE — No Hormone
 
 ```{r lmer-lae-none}
@@ -343,8 +345,13 @@ WSTC_TMR_sig <- WSTC_paired %>%
     sig = ifelse(is.na(sig), FALSE, sig)   # PBS rows / untested combos = not sig
   )
 
-save_table(WSTC_TMR_sig, "WSTC_no_ESTRADIOL_with_sig.csv")
-cat("✓ WSTC_no_ESTRADIOL_with_sig.csv saved (includes sig/q columns)\n")
+save_table_by_timepoint(
+  WSTC_TMR_sig,
+  "WSTC_no_ESTRADIOL_with_sig.csv",
+  keep_combined = TRUE
+)
+cat("✓ Saved WSTC_no_ESTRADIOL_with_sig_4h.csv and WSTC_no_ESTRADIOL_with_sig_144h.csv\n")
+cat("  Legacy combined file retained as WSTC_no_ESTRADIOL_with_sig.csv\n")
 ```
 
 ## Timepoint Comparisons
@@ -398,6 +405,7 @@ did_stats <- build_timecourse_did_table(
 
 save_table(did_stats, "WSTC_timecourse_did_vs_pbs_lmer.csv")
 cat("✓ Saved: WSTC_timecourse_did_vs_pbs_lmer.csv\n")
+cat("  (This DiD table remains combined because each row is a 144h-vs-4h contrast.)\n")
 
 # Minimal output validation
 if (nrow(did_stats) > 0) {

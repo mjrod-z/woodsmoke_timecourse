@@ -14,6 +14,22 @@ This repository contains modular R code for:
 - Variance partitioning and PCA across timepoints
 - LDH / TEER analysis scaffolding
 
+## Output tables
+
+Timepoint-specific downstream tables are written to `output/tables/` with deterministic suffixes based on the existing `TIMEPOINT` labels:
+
+- `*_4h.csv` for `TIMEPOINT == "4"`
+- `*_144h.csv` for `TIMEPOINT == "144"`
+
+Examples:
+
+- `MSD_WSTC_LAE_NONE_lmer_4h.csv`
+- `MSD_WSTC_LAE_NONE_lmer_144h.csv`
+- `WSTC_no_ESTRADIOL_with_sig_4h.csv`
+- `WSTC_no_ESTRADIOL_with_sig_144h.csv`
+
+The legacy combined `WSTC_no_ESTRADIOL_with_sig.csv` export is still written for backward compatibility. The DiD summary `WSTC_timecourse_did_vs_pbs_lmer.csv` remains combined because each row is itself a 144h-versus-4h contrast.
+
 ## DiD timecourse interpretation
 
 Timecourse inference now includes a difference-in-differences (DiD) mixed-model workflow for cytokines:

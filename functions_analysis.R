@@ -926,7 +926,39 @@ run_lmer_chunk <- function(label, celltype_filter, hormone_filter,
     alpha         = alpha_q,
     trend_alpha   = trend_a
   )
-
+  
+  if ("TIMEPOINT" %in% names(d_filt)) {
+    timepoints_present <- unique(as.character(d_filt$TIMEPOINT))
+    timepoints_present <- timepoints_present[!is.na(timepoints_present)]
+    ordered_timepoints <- unique(c(
+      TIMEPOINT_LEVELS,
+      sort(setdiff(timepoints_present, TIMEPOINT_LEVELS))
+    ))
+    ordered_timepoints <- ordered_timepoints[ordered_timepoints %in% timepoints_present]
+    
+    for (tp in ordered_timepoints) {
+      d_tp <- d_filt %>% dplyr::filter(as.character(TIMEPOINT) == tp)
+      if (nrow(d_tp) == 0) next
+      
+      msd_sum_tp <- summarize_to_wide(d_tp, measure_vars = valid_cyts)
+      pbs_ctl_tp <- msd_sum_tp %>%
+        dplyr::select(Measurement, `PBS_Control`) %>%
+        dplyr::arrange(Measurement)
+      
+      build_lmer_sig_table(
+        lmer_All      = lmer_All %>% dplyr::filter(as.character(TIMEPOINT) == tp),
+        lmer_F        = lmer_F   %>% dplyr::filter(as.character(TIMEPOINT) == tp),
+        lmer_M        = lmer_M   %>% dplyr::filter(as.character(TIMEPOINT) == tp),
+        msd_summary   = msd_sum_tp,
+        pbs_control   = pbs_ctl_tp,
+        cytokine_llod = llod_table,
+        out_filename  = append_filename_suffix(out_csv, timepoint_output_suffix(tp)),
+        alpha         = alpha_q,
+        trend_alpha   = trend_a
+      )
+    }
+  }
+  
   cat("  Saved:", out_csv, "\n")
   # Return significance table, interaction results, and plot-ready LMER data
   invisible(list(sig_table = sig_tbl, lmer_interaction = lmer_int,
@@ -968,7 +1000,7 @@ build_lmer_sig_table <- function(lmer_All, lmer_F, lmer_M,
     ))
 
   # Steps 8-9: pivot stars long
-  stars_long <- stars_df %>%
+  stars_wide <- stars_df %>%
     tidyr::pivot_longer(
       cols           = dplyr::any_of(c("response_All","response_F","response_M")),
       names_to       = "Group",
@@ -976,11 +1008,25 @@ build_lmer_sig_table <- function(lmer_All, lmer_F, lmer_M,
       values_drop_na = TRUE
     ) %>%
     dplyr::select(Measurement, EXPOSURE, stars) %>%
-    tidyr::pivot_wider(names_from = EXPOSURE, values_from = stars) %>%
-    tidyr::pivot_longer(cols = -Measurement,
-                        names_to = "Exposure", values_to = "Stars") %>%
-    dplyr::mutate(Exposure = stringr::str_trim(
-      gsub(" - PBS_Control$", "", Exposure)))
+    tidyr::pivot_wider(names_from = EXPOSURE, values_from = stars)
+  
+  star_value_cols <- setdiff(names(stars_wide), "Measurement")
+  if (length(star_value_cols) == 0) {
+    stars_long <- tibble::tibble(
+      Measurement = character(),
+      Exposure = character(),
+      Stars = character()
+    )
+  } else {
+    stars_long <- stars_wide %>%
+      tidyr::pivot_longer(
+        cols = dplyr::all_of(star_value_cols),
+        names_to = "Exposure",
+        values_to = "Stars"
+      ) %>%
+      dplyr::mutate(Exposure = stringr::str_trim(
+        gsub(" - PBS_Control$", "", Exposure)))
+  }
 
   # Step 10: summary without PBS
   wide_no_pbs <- msd_summary %>%
