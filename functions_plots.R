@@ -642,3 +642,52 @@ save_table <- function(data, filename, path = PATH_OUTPUT_TABLES) {
   cat("✓ Saved table:", file.path(path, filename), "\n")
   invisible(TRUE)
 }
+
+append_filename_suffix <- function(filename, suffix) {
+  if (grepl("\\.[^.]+$", filename)) {
+    sub("(\\.[^.]+)$", paste0("_", suffix, "\\1"), filename)
+  } else {
+    paste0(filename, "_", suffix)
+  }
+}
+
+timepoint_output_suffix <- function(timepoint) {
+  tp <- as.character(timepoint)
+  if (identical(tp, "4")) {
+    return("4h")
+  }
+  if (identical(tp, "144")) {
+    return("144h")
+  }
+  paste0("tp", safe_name(tp))
+}
+
+save_table_by_timepoint <- function(data,
+                                    filename,
+                                    timepoint_col = "TIMEPOINT",
+                                    path = PATH_OUTPUT_TABLES,
+                                    keep_combined = FALSE,
+                                    timepoint_levels = TIMEPOINT_LEVELS) {
+  if (!timepoint_col %in% names(data)) {
+    stop("save_table_by_timepoint(): missing timepoint column: ", timepoint_col)
+  }
+  
+  timepoints_present <- unique(as.character(data[[timepoint_col]]))
+  timepoints_present <- timepoints_present[!is.na(timepoints_present)]
+  ordered_timepoints <- unique(c(timepoint_levels, sort(setdiff(timepoints_present, timepoint_levels))))
+  ordered_timepoints <- ordered_timepoints[ordered_timepoints %in% timepoints_present]
+  
+  for (tp in ordered_timepoints) {
+    save_table(
+      data = dplyr::filter(data, as.character(.data[[timepoint_col]]) == tp),
+      filename = append_filename_suffix(filename, timepoint_output_suffix(tp)),
+      path = path
+    )
+  }
+  
+  if (isTRUE(keep_combined)) {
+    save_table(data = data, filename = filename, path = path)
+  }
+  
+  invisible(ordered_timepoints)
+}
